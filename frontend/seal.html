@@ -1,0 +1,231 @@
+<!-- frontend/seal.html -->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Seal Entry</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="page-wrapper">
+      <h1 class="title">Seal Entry</h1>
+
+      <!-- Delivered Seals Section -->
+      <div class="form-box delivered">
+        <h2>Delivered Seals</h2>
+        <form id="sealForm">
+          <input type="hidden" id="visit" name="visit" />
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="seal_from">Seal # From</label>
+              <input type="text" id="seal_from" />
+            </div>
+            <div class="form-group">
+              <label for="seal_to">To</label>
+              <input type="text" id="seal_to" />
+            </div>
+            <div class="form-group">
+              <label for="single_seal">Single Seal #</label>
+              <input type="text" id="single_seal" />
+            </div>
+            <div class="form-group">
+              <label for="total_count">Total Count</label>
+              <input type="number" id="total_count" readonly />
+            </div>
+          </div>
+
+          <!-- Two columns: LEFT = Notes+Supervisor, RIGHT = Preview+Buttons -->
+          <div class="form-row vertical-flex">
+            <!-- LEFT -->
+            <div class="half">
+              <label for="delivered_notes">Notes</label>
+              <textarea id="delivered_notes" rows="3"></textarea>
+
+              <label for="vessel_supervisor" style="margin-top: 10px"
+                >Vessel Supervisor</label
+              >
+              <select id="vessel_supervisor">
+                <option value="">Select Vessel Supervisor</option>
+                <option value="John Doe">John Doe</option>
+                <option value="Fatima Saleh">Fatima Saleh</option>
+                <option value="Ali Hamdan">Ali Hamdan</option>
+              </select>
+            </div>
+
+            <!-- RIGHT -->
+            <div class="half">
+              <label for="entered_seals">Entered Seals (preview)</label>
+              <textarea id="entered_seals" rows="4" readonly></textarea>
+
+              <div class="button-row right">
+                <button id="updateBtn" type="submit" class="btn update-btn">
+                  Update
+                </button>
+                <button type="button" id="deliveredClear" class="btn clear-btn">
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <p
+          id="clear-message"
+          style="
+            display: none;
+            color: green;
+            font-weight: bold;
+            margin-top: 10px;
+          "
+        >
+          Delivered Seal Form cleared successfully.
+        </p>
+      </div>
+
+      <!-- Returned Seals Section -->
+      <div class="form-box returned">
+        <h2>Returned Seals</h2>
+        <form id="returnedSealForm">
+          <input type="hidden" id="return_visit" />
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="return_seal_from">Seal # From</label>
+              <input type="text" id="return_seal_from" />
+            </div>
+            <div class="form-group">
+              <label for="return_seal_to">To</label>
+              <input type="text" id="return_seal_to" />
+            </div>
+            <div class="form-group">
+              <label for="return_single_seal">Single Seal #</label>
+              <input type="text" id="return_single_seal" />
+            </div>
+            <div class="form-group">
+              <label for="return_total_count">Total Count</label>
+              <input type="number" id="return_total_count" readonly />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="damaged_seal">Damaged Seal #</label>
+              <input type="text" id="damaged_seal" />
+            </div>
+            <div class="form-group">
+              <label for="damaged_count">Total Count of Damaged</label>
+              <input type="number" id="damaged_count" readonly />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="lost_seal">Lost Seal #</label>
+              <input type="text" id="lost_seal" />
+            </div>
+            <div class="form-group">
+              <label for="lost_count">Total Count of Lost</label>
+              <input type="number" id="lost_count" readonly />
+            </div>
+          </div>
+
+          <!-- Two columns: LEFT = Notes+Supervisor, RIGHT = Preview+Buttons -->
+          <div class="form-row vertical-flex">
+            <!-- LEFT -->
+            <div class="half">
+              <label for="return_notes">Notes</label>
+              <textarea id="return_notes" rows="3"></textarea>
+
+              <label for="return_vessel_supervisor" style="margin-top: 10px"
+                >Vessel Supervisor</label
+              >
+              <select id="return_vessel_supervisor" required>
+                <option value="" disabled selected>
+                  Select Vessel Supervisor
+                </option>
+                <option value="John Doe">John Doe</option>
+                <option value="Fatima Saleh">Fatima Saleh</option>
+                <option value="Ali Hamdan">Ali Hamdan</option>
+              </select>
+            </div>
+
+            <!-- RIGHT -->
+            <div class="half">
+              <label for="return_entered_seals">Entered Seals (preview)</label>
+              <textarea id="return_entered_seals" rows="4" readonly></textarea>
+
+              <div class="button-row right">
+                <button type="submit" class="btn update-btn">Update</button>
+                <button type="button" id="returnedClear" class="btn clear-btn">
+                  Clear
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <hr />
+      <button id="submitAllBtn">Submit All</button>
+    </div>
+
+    <!-- Seal Log Section -->
+    <div class="form-box" id="seal-log">
+      <div class="row-between" style="margin-bottom: 12px">
+        <h2>Seal Log</h2>
+        <button id="refreshSealLogBtn" type="button" class="btn clear-btn">
+          Refresh Log
+        </button>
+      </div>
+
+      <div id="sealLogMeta" class="muted" style="margin-bottom: 10px"></div>
+      <div id="sealLogBox" aria-label="Seal Log" role="log"></div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="submitAll.js"></script>
+    <script src="seal-log.js"></script>
+    <script src="deliveredSeals.js"></script>
+    <script src="returnedSeals.js"></script>
+
+    <!-- Tiny autosize helper for preview boxes -->
+    <script>
+      function autosizeTextarea(el) {
+        if (!el) return;
+        const max =
+          parseInt(getComputedStyle(el).maxHeight || "0", 10) || Infinity;
+        el.style.height = "auto";
+        el.style.height = Math.min(el.scrollHeight, max) + "px";
+      }
+      function refreshPreviewsAutosize() {
+        autosizeTextarea(document.getElementById("entered_seals"));
+        autosizeTextarea(document.getElementById("return_entered_seals"));
+      }
+      window.addEventListener("load", refreshPreviewsAutosize);
+      window.addEventListener("resize", refreshPreviewsAutosize);
+      // Call autosizeTextarea() after you set preview values in delivered/returned JS.
+    </script>
+
+    <script>
+      function autoExpand(el) {
+        if (!el) return;
+        el.style.height = "auto"; // reset height
+        el.style.height = el.scrollHeight + "px"; // set to content height
+      }
+
+      function attachAutoExpand(id) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener("input", () => autoExpand(el));
+        // expand once on page load in case there's prefilled content
+        autoExpand(el);
+      }
+
+      window.addEventListener("load", () => {
+        attachAutoExpand("delivered_notes");
+        attachAutoExpand("return_notes");
+      });
+    </script>
+  </body>
+</html>
