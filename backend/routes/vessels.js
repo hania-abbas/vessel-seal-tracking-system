@@ -3,7 +3,7 @@
 // backend/routes/vessels.js
 const express = require('express');
 const router = express.Router();
-const { sql, poolPromise } = require('../db/db');
+const { database, sql } = require('../db/db');
 
 // GET /api/vessels - Fetch all vessel visits
 router.get('/', async (req, res) => {

@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Seal System Test Runner</title>
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="loading.css" />
+    <style>
+      .test-panel {
+        margin: 20px;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+
+      .test-buttons {
+        margin-bottom: 20px;
+      }
+
+      .test-results {
+        font-family: monospace;
+        white-space: pre-wrap;
+        padding: 10px;
+        background: #f5f5f5;
+        border: 1px solid #ddd;
+        max-height: 400px;
+        overflow-y: auto;
+      }
+
+      .test-case {
+        margin: 10px 0;
+        padding: 10px;
+        border: 1px solid #eee;
+      }
+
+      .test-case.passed {
+        border-left: 4px solid #28a745;
+      }
+
+      .test-case.failed {
+        border-left: 4px solid #dc3545;
+      }
+
+      .test-case.running {
+        border-left: 4px solid #007bff;
+      }
+
+      .test-controls {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+
+      .category-toggle {
+        margin: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page-wrapper">
+      <h1>Seal System Test Runner</h1>
+
+      <div class="test-panel">
+        <h2>Test Controls</h2>
+        <div class="test-controls">
+          <div>
+            <h3>Categories</h3>
+            <div class="category-toggle">
+              <input type="checkbox" id="validTests" checked />
+              <label for="validTests">Valid Cases</label>
+            </div>
+            <div class="category-toggle">
+              <input type="checkbox" id="invalidTests" checked />
+              <label for="invalidTests">Invalid Cases</label>
+            </div>
+            <div class="category-toggle">
+              <input type="checkbox" id="edgeTests" checked />
+              <label for="edgeTests">Edge Cases</label>
+            </div>
+          </div>
+
+          <div>
+            <h3>Test Data</h3>
+            <select id="testCaseSelect">
+              <option value="">Select a test case...</option>
+              <!-- Will be populated by JavaScript -->
+            </select>
+            <button onclick="loadSelectedTest()">Load Test Data</button>
+          </div>
+        </div>
+
+        <div class="test-buttons">
+          <button onclick="runAllTests()">Run All Tests</button>
+          <button onclick="clearResults()">Clear Results</button>
+        </div>
+
+        <div id="testResults" class="test-results">
+          Test results will appear here...
+        </div>
+      </div>
+
+      <!-- Include the actual form for testing -->
+      <div class="form-box returned" style="margin-top: 20px">
+        <h2>Test Form</h2>
+        <form id="testForm">
+          <div class="form-row">
+            <div class="form-group">
+              <label for="return_seal_from">Return Seal From</label>
+              <input
+                type="text"
+                id="return_seal_from"
+                name="return_seal_from"
+              />
+            </div>
+            <div class="form-group">
+              <label for="return_seal_to">To</label>
+              <input type="text" id="return_seal_to" name="return_seal_to" />
+            </div>
+            <div class="form-group">
+              <label for="return_single_seal">Single Seal</label>
+              <input
+                type="text"
+                id="return_single_seal"
+                name="return_single_seal"
+              />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="damaged" name="damaged" />
+                Damaged
+              </label>
+              <input
+                type="text"
+                id="damaged_seal"
+                name="damaged_seal"
+                placeholder="Damaged Seal #"
+              />
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="lost" name="lost" />
+                Lost
+              </label>
+              <input
+                type="text"
+                id="lost_seal"
+                name="lost_seal"
+                placeholder="Lost Seal #"
+              />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="vessel_supervisor">Vessel Supervisor</label>
+              <input
+                type="text"
+                id="vessel_supervisor"
+                name="vessel_supervisor"
+              />
+            </div>
+            <div class="form-group">
+              <label for="return_notes">Notes</label>
+              <textarea id="return_notes" name="return_notes"></textarea>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script type="module">
+      import { testData, populateTestForm, runTestCases } from "./test-data.js";
+
+      // Populate test case select
+      const select = document.getElementById("testCaseSelect");
+
+      function addTestCases(category, cases) {
+        const group = document.createElement("optgroup");
+        group.label = category;
+
+        Object.keys(cases).forEach((caseName) => {
+          const option = document.createElement("option");
+          option.value = `${category.toLowerCase()}.${caseName}`;
+          option.textContent = caseName;
+          group.appendChild(option);
+        });
+
+        select.appendChild(group);
+      }
+
+      addTestCases("Valid", testData.valid);
+      addTestCases("Invalid", testData.invalid);
+      addTestCases("Edge", testData.edge);
+
+      // Make functions available globally
+      window.loadSelectedTest = () => {
+        const selected = select.value;
+        if (!selected) return;
+
+        const [category, caseName] = selected.split(".");
+        const data = testData[category][caseName];
+
+        if (data) {
+          populateTestForm("testForm", data);
+        }
+      };
+
+      window.runAllTests = async () => {
+        const results = document.getElementById("testResults");
+        results.innerHTML = "Running tests...\n";
+
+        const validEnabled = document.getElementById("validTests").checked;
+        const invalidEnabled = document.getElementById("invalidTests").checked;
+        const edgeEnabled = document.getElementById("edgeTests").checked;
+
+        try {
+          const testResults = await runTestCases("testForm");
+
+          results.innerHTML += "\nTest Results:\n\n";
+
+          if (testResults.passed.length) {
+            results.innerHTML += "Passed Tests:\n";
+            testResults.passed.forEach((test) => {
+              results.innerHTML += `✓ ${test}\n`;
+            });
+          }
+
+          if (testResults.failed.length) {
+            results.innerHTML += "\nFailed Tests:\n";
+            testResults.failed.forEach(({ name, error }) => {
+              results.innerHTML += `✗ ${name}: ${error}\n`;
+            });
+          }
+        } catch (error) {
+          results.innerHTML += `\nTest run failed: ${error.message}\n`;
+        }
+      };
+
+      window.clearResults = () => {
+        document.getElementById("testResults").innerHTML =
+          "Test results will appear here...";
+        document.getElementById("testForm").reset();
+      };
+    </script>
+  </body>
+</html>

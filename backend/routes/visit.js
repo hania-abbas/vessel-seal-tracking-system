@@ -1,19 +1,23 @@
 //visit.js
 const express = require('express');
 const router = express.Router();
-const { sql, poolPromise } = require('../db/db');
+const { database, sql } = require('../db/db');
 
-router.get('/', async (req, res) => {
+// GET /api/visits/active
+router.get('/active', async (req, res) => {
   try {
     const pool = await poolPromise;
     const result = await pool.request().query(`
-      SELECT TOP 1 Visit 
-      FROM VesselVisitSeal 
-      ORDER BY LastUpdate DESC
+      SELECT TOP 1 Visit
+      FROM dbo.VesselVisitSeal
+      WHERE Visit IS NOT NULL
+      ORDER BY LastUpdate DESC;
     `);
+
     if (!result.recordset.length) {
-      return res.status(404).json({ error: 'No visit found' });
+      return res.status(404).json({ error: 'no_active_visit' });
     }
+
     res.json({ visit: result.recordset[0].Visit });
   } catch (err) {
     console.error('Error fetching visit:', err);

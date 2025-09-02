@@ -1,7 +1,7 @@
 // backend/routes/delivered.js
 const express = require('express');
 const router = express.Router();
-const { sql, poolPromise } = require('../db/db');
+const { database, sql } = require('../db/db');
 const { logAudit, getRow } = require('../auditHelper');
 
 /* ---------------- strict validators ---------------- */
@@ -49,15 +49,19 @@ function computeDeliveredCount(set) {
 async function loadUsedSealsFromDelivered(pool, { excludeId = null } = {}) {
   const used = new Set();
   const q = await pool.request().query(`
-    SELECT id, delivered_from, delivered_to, delivered_single
+    SELECT id, seal_number, total_count
     FROM dbo.delivered_seals
   `);
   for (const r of q.recordset) {
     if (excludeId && r.id === excludeId) continue;
-    if (r.delivered_from != null && r.delivered_to != null) {
-      expandRange(Number(r.delivered_from), Number(r.delivered_to)).forEach((n) => used.add(n));
+    if (r.seal_number) {
+      if (r.seal_number.includes('-')) {
+        const [from, to] = r.seal_number.split('-').map(Number);
+        expandRange(from, to).forEach((n) => used.add(n));
+      } else {
+        used.add(Number(r.seal_number));
+      }
     }
-    if (r.delivered_single != null) used.add(Number(r.delivered_single));
   }
   return used;
 }
@@ -88,8 +92,8 @@ router.get('/', async (req, res) => {
       .input('visit', sql.NVarChar(50), visit)
       .query(`
         SELECT id, visit,
-               delivered_from, delivered_to, delivered_single,
-               delivered_notes, vessel_supervisor, delivered_user_planner,
+               seal_number, total_count,
+               delivered_notes, vessel_supervisor, user_planner,
                CONVERT(varchar(19), created_at, 120) AS created_at
         FROM dbo.delivered_seals
         WHERE visit=@visit
@@ -133,11 +137,21 @@ router.get('/:id', async (req, res) => {
 /* ---------------- CREATE ---------------- */
 router.post('/', async (req, res) => {
   try {
+    console.log('Received POST /delivered-seals payload:', JSON.stringify(req.body, null, 2));
     const { visit, delivered_notes = null, vessel_supervisor, delivered_user_planner = null } = req.body;
-    if (!visit) return res.status(400).json({ error: 'visit_required' });
-    if (!nonEmpty(vessel_supervisor)) return res.status(400).json({ error: 'supervisor_required' });
+    
+    // Validate required fields
+    if (!visit) {
+      console.log('Missing visit ID');
+      return res.status(400).json({ error: 'visit_required' });
+    }
+    if (!nonEmpty(vessel_supervisor)) {
+      console.log('Missing vessel supervisor');
+      return res.status(400).json({ error: 'supervisor_required' });
+    }
 
     const norm = normalizeDeliveredPayload(req.body);
+    console.log('Normalized payload:', norm);
     if (!norm.ok) return res.status(400).json({ error: 'invalid_seal_format' });
 
     const newSet = buildDeliveredSet(norm);
@@ -152,33 +166,61 @@ router.post('/', async (req, res) => {
 
     const { deliveredCount } = computeDeliveredCount(newSet);
 
-    const insert = await pool
-      .request()
-      .input('visit', sql.NVarChar(50), visit)
-      .input('delivered_from', sql.BigInt, norm.f)
-      .input('delivered_to', sql.BigInt, norm.t)
-      .input('delivered_single', sql.BigInt, norm.s)
-      .input('delivered_notes', sql.NVarChar(2000), delivered_notes)
-      .input('vessel_supervisor', sql.NVarChar(100), vessel_supervisor.trim())
-      .input('delivered_user_planner', sql.NVarChar(100), delivered_user_planner || 'planner_user')
-      .query(`
-        INSERT INTO dbo.delivered_seals(
-          visit, delivered_from, delivered_to, delivered_single,
-          delivered_notes, vessel_supervisor, delivered_user_planner, created_at
-        )
-        OUTPUT INSERTED.*
-        VALUES(
-          @visit, @delivered_from, @delivered_to, @delivered_single,
-          @delivered_notes, @vessel_supervisor, @delivered_user_planner, SYSUTCDATETIME()
-        );
-      `);
+    // Generate array of individual seal numbers
+    const sealNumbers = [];
+    if (norm.f !== null && norm.t !== null) {
+      for (let i = norm.f; i <= norm.t; i++) {
+        sealNumbers.push(i.toString());
+      }
+    } else if (norm.s !== null) {
+      sealNumbers.push(norm.s.toString());
+    }
 
-    const row = insert.recordset[0];
-    await logAudit('delivered_seals', 'INSERT', row.id, null, row, delivered_user_planner || 'planner_user');
-    res.status(201).json({ ...row, deliveredCount });
+    // Insert each seal number as a separate record
+    const insertPromises = sealNumbers.map(sealNum => 
+      pool.request()
+        .input('visit', sql.NVarChar(50), visit)
+        .input('seal_number', sql.NVarChar(100), sealNum)
+        .input('total_count', sql.Int, 1)
+        .input('delivered_notes', sql.NVarChar(2000), delivered_notes)
+        .input('vessel_supervisor', sql.NVarChar(100), vessel_supervisor.trim())
+        .input('user_planner', sql.NVarChar(100), delivered_user_planner || 'planner_user')
+        .query(`
+          INSERT INTO dbo.delivered_seals(
+            visit, seal_number, total_count,
+            delivered_notes, vessel_supervisor, user_planner, created_at
+          )
+          OUTPUT INSERTED.*
+          VALUES(
+            @visit, @seal_number, @total_count,
+            @delivered_notes, @vessel_supervisor, @user_planner, SYSUTCDATETIME()
+          );
+        `)
+    );
+
+    // Execute all inserts
+    const results = await Promise.all(insertPromises);
+    const insertedRows = results.map(r => r.recordset[0]);
+
+    // Log audit for each inserted row
+    for (const row of insertedRows) {
+      await logAudit('delivered_seals', 'INSERT', row.id, null, row, delivered_user_planner || 'planner_user');
+    }
+    
+    res.status(201).json({ 
+      insertedRows,
+      count: insertedRows.length,
+      firstId: insertedRows[0]?.id,
+      lastId: insertedRows[insertedRows.length - 1]?.id
+    });
   } catch (err) {
-    console.error('POST /delivered-seals', err);
-    res.status(500).json({ error: 'server_error' });
+    console.error('POST /delivered-seals error:', {
+      message: err.message,
+      stack: err.stack,
+      code: err.code,
+      name: err.name
+    });
+    res.status(500).json({ error: 'server_error', message: err.message });
   }
 });
 

@@ -2,7 +2,7 @@
 
 async function getActiveVisit() {
   try {
-    const r = await fetch('/api/visits/active');
+    const r = await fetch('http://localhost:3000/api/visits/active', {cache: 'no-store'});
     const j = await r.json();
     return j.visit || null;
   } catch {
@@ -85,7 +85,7 @@ function buildSentence(r) {
 
 async function loadSealLog() {
   const visit = await getActiveVisit();
-  const url = `/api/seal-log${visit ? `?visit=${encodeURIComponent(visit)}` : ''}`;
+  const url = `http://localhost:3000/api/seal-log${visit ? `?visit=${encodeURIComponent(visit)}` : ''}`;
 
   const box = document.getElementById('sealLogBox');
   const meta = document.getElementById('sealLogMeta');
@@ -99,12 +99,12 @@ async function loadSealLog() {
     if (!res.ok) throw new Error(await res.text());
     const rows = await res.json();
 
-    if (!rows || rows.length === 0) {
+    if (!rows || !rows.lines || rows.lines.length === 0) {
       box.innerHTML = '<div class="log-line">No entries yet.</div>';
       return;
     }
 
-    box.innerHTML = rows.map(r => {
+    box.innerHTML = rows.lines.map(r => {
       const ts = formatTimestamp(r.timestamp || r.ts || Date.now());
       const msg = buildSentence(r);
       return `

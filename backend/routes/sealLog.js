@@ -1,7 +1,7 @@
 // backend/routes/sealLog.js
 const express = require('express');
 const router = express.Router();
-const { sql, poolPromise } = require('../db/db');
+const { database, sql } = require('../db/db');
 
 // GET /api/seal-log?visit=...&limit=200
 router.get('/', async (req, res) => {

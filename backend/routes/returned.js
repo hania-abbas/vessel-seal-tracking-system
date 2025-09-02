@@ -1,7 +1,7 @@
 // backend/routes/returned.js
 const express = require('express');
 const router = express.Router();
-const { sql, poolPromise } = require('../db/db');
+const { database, sql } = require('../db/db');
 const { logAudit, getRow } = require('../auditHelper');
 
 /* ---------------- strict validators ---------------- */
@@ -10,48 +10,56 @@ const isSeal = (s) => RE_SEAL.test(String(s ?? '').trim());
 const nonEmpty = (s) => String(s ?? '').trim().length > 0;
 
 function normalizeReturnedPayload({
-  return_seal_from, return_seal_to, return_single_seal,
-  damaged, lost, damaged_seal, lost_seal
+  seal_number, damaged_seal_number, lost_seal_number, damaged_count, lost_count
 }) {
-  const hasRange = return_seal_from != null || return_seal_to != null;
-  const hasSingle = return_single_seal != null && String(return_single_seal) !== '';
+  const seals = String(seal_number ?? '').trim();
+  const hasSeals = seals.length > 0;
 
-  if (hasRange) {
-    if (!isSeal(return_seal_from) || !isSeal(return_seal_to)) return { ok: false };
-    if (Number(return_seal_to) < Number(return_seal_from)) return { ok: false };
-  }
-  if (hasSingle) {
-    if (!isSeal(return_single_seal)) return { ok: false };
-  }
-  if (!hasRange && !hasSingle) return { ok: false };
+  if (!hasSeals) return { ok: false };
 
-  if (damaged && (damaged_seal != null && String(damaged_seal) !== '') && !isSeal(damaged_seal)) return { ok: false };
-  if (lost && (lost_seal != null && String(lost_seal) !== '') && !isSeal(lost_seal)) return { ok: false };
+  // Validate all individual seal numbers (comma-separated or range)
+  const sealList = seals.split(',').map(s => s.trim());
+  for (const seal of sealList) {
+    if (seal.includes('-')) {
+      const [from, to] = seal.split('-').map(Number);
+      if (!isSeal(from) || !isSeal(to) || to < from) return { ok: false };
+    } else {
+      if (!isSeal(seal)) return { ok: false };
+    }
+  }
+
+  if (damaged_seal_number && !isSeal(damaged_seal_number)) return { ok: false };
+  if (lost_seal_number && !isSeal(lost_seal_number)) return { ok: false };
 
   return {
     ok: true,
-    f: hasRange ? Number(return_seal_from) : null,
-    t: hasRange ? Number(return_seal_to) : null,
-    s: hasSingle ? Number(return_single_seal) : null,
-    damaged: !!damaged,
-    lost: !!lost,
-    d: damaged ? (damaged_seal != null && String(damaged_seal) !== '' ? Number(damaged_seal) : null) : null,
-    l: lost ? (lost_seal != null && String(lost_seal) !== '' ? Number(lost_seal) : null) : null,
+    seal_number: seals,
+    damaged_seal_number: damaged_seal_number ?? null,
+    lost_seal_number: lost_seal_number ?? null,
+    damaged_count: damaged_count ?? 0,
+    lost_count: lost_count ?? 0,
   };
 }
 
 const expandRange = (a, b) => { const out=[]; for(let n=a;n<=b;n++) out.push(n); return out; };
-function buildReturnedSet({ f, t, s }) {
+function buildReturnedSet(seal_number) {
   const set = new Set();
-  if (f !== null && t !== null) expandRange(f, t).forEach((n) => set.add(n));
-  if (s !== null) set.add(s);
+  const seals = seal_number.split(',').map(s => s.trim());
+  for (const seal of seals) {
+    if (seal.includes('-')) {
+      const [from, to] = seal.split('-').map(Number);
+      expandRange(from, to).forEach(n => set.add(n));
+    } else {
+      set.add(Number(seal));
+    }
+  }
   return set;
 }
-function computeEffectiveReturnedCount({ baseSet, damaged, lost, d, l }) {
+function computeEffectiveReturnedCount({ baseSet, damaged_seal_number, lost_seal_number }) {
   const copy = new Set(baseSet);
   const excluded = [];
-  if (damaged && d !== null && copy.delete(d)) excluded.push({ reason: 'damaged', seal: d });
-  if (lost && l !== null && copy.delete(l)) excluded.push({ reason: 'lost', seal: l });
+  if (damaged_seal_number && copy.delete(Number(damaged_seal_number))) excluded.push({ reason: 'damaged', seal: damaged_seal_number });
+  if (lost_seal_number && copy.delete(Number(lost_seal_number))) excluded.push({ reason: 'lost', seal: lost_seal_number });
   return { effectiveReturnedCount: copy.size, excluded, effectiveReturnedList: [...copy] };
 }
 
@@ -64,15 +72,21 @@ async function loadDeliveredSetForVisit(pool, visit) {
     .request()
     .input('visit', sql.NVarChar(50), visit)
     .query(`
-      SELECT delivered_from, delivered_to, delivered_single
+      SELECT seal_number, total_count
       FROM dbo.delivered_seals
       WHERE visit=@visit
     `);
   for (const r of q.recordset) {
-    if (r.delivered_from != null && r.delivered_to != null) {
-      expandRange(Number(r.delivered_from), Number(r.delivered_to)).forEach((n) => eligible.add(n));
+    if (r.seal_number) {
+      if (r.seal_number.includes('-')) {
+        const [from, to] = r.seal_number.split('-').map(Number);
+        expandRange(from, to).forEach(n => eligible.add(n));
+      } else if (r.seal_number.includes(',')) {
+        r.seal_number.split(',').map(s => Number(s.trim())).forEach(n => eligible.add(n));
+      } else {
+        eligible.add(Number(r.seal_number));
+      }
     }
-    if (r.delivered_single != null) eligible.add(Number(r.delivered_single));
   }
   return eligible;
 }
@@ -84,18 +98,25 @@ async function loadAlreadyReturnedForVisit(pool, visit, { excludeId = null } = {
     .request()
     .input('visit', sql.NVarChar(50), visit)
     .query(`
-      SELECT id, return_seal_from, return_seal_to, return_single_seal, damaged_seal, lost_seal
+      SELECT id, seal_number, damaged_seal_number, lost_seal_number
       FROM dbo.returned_seals
       WHERE visit=@visit
     `);
   for (const r of q.recordset) {
     if (excludeId && r.id === excludeId) continue;
-    if (r.return_seal_from != null && r.return_seal_to != null) {
-      expandRange(Number(r.return_seal_from), Number(r.return_seal_to)).forEach((n) => used.add(n));
+    if (r.seal_number) {
+      const seals = r.seal_number.split(',').map(s => s.trim());
+      for (const seal of seals) {
+        if (seal.includes('-')) {
+          const [from, to] = seal.split('-').map(Number);
+          expandRange(from, to).forEach(n => used.add(n));
+        } else {
+          used.add(Number(seal));
+        }
+      }
     }
-    if (r.return_single_seal != null) used.add(Number(r.return_single_seal));
-    if (r.damaged_seal != null) used.add(Number(r.damaged_seal));
-    if (r.lost_seal != null) used.add(Number(r.lost_seal));
+    if (r.damaged_seal_number) used.add(Number(r.damaged_seal_number));
+    if (r.lost_seal_number) used.add(Number(r.lost_seal_number));
   }
   return used;
 }
@@ -112,9 +133,10 @@ router.get('/', async (req, res) => {
       .input('visit', sql.NVarChar(50), visit)
       .query(`
         SELECT id, visit,
-               return_seal_from, return_seal_to, return_single_seal,
-               damaged, lost, damaged_seal, lost_seal,
-               return_notes, vessel_supervisor, return_user_planner,
+               seal_number,
+               damaged_seal_number, damaged_count,
+               lost_seal_number, lost_count,
+               return_notes, vessel_supervisor, user_planner,
                CONVERT(varchar(19), created_at, 120) AS created_at
         FROM dbo.returned_seals
         WHERE visit=@visit
@@ -140,9 +162,10 @@ router.get('/:id', async (req, res) => {
       .input('id', sql.Int, id)
       .query(`
         SELECT id, visit,
-               return_seal_from, return_seal_to, return_single_seal,
-               damaged, lost, damaged_seal, lost_seal,
-               return_notes, vessel_supervisor, return_user_planner,
+               seal_number,
+               damaged_seal_number, damaged_count,
+               lost_seal_number, lost_count,
+               return_notes, vessel_supervisor, user_planner,
                CONVERT(varchar(19), created_at, 120) AS created_at
         FROM dbo.returned_seals
         WHERE id=@id;
@@ -159,76 +182,120 @@ router.get('/:id', async (req, res) => {
 /* ---------------- CREATE ---------------- */
 router.post('/', async (req, res) => {
   try {
-    const { visit, return_notes = null, vessel_supervisor, return_user_planner = null } = req.body;
-    if (!visit) return res.status(400).json({ error: 'visit_required' });
-    if (!nonEmpty(vessel_supervisor)) return res.status(400).json({ error: 'supervisor_required' });
+    console.log('Received returned seals request:', {
+      body: req.body,
+      visitId: req.body.visit,
+      supervisor: req.body.vessel_supervisor
+    });
+
+    const { visit, return_notes = null, vessel_supervisor, user_planner = null } = req.body;
+    
+    if (!visit) {
+      console.warn('Missing required field: visit');
+      return res.status(400).json({ error: 'visit_required', message: 'Visit ID is required' });
+    }
+    
+    if (!nonEmpty(vessel_supervisor)) {
+      console.warn('Missing required field: vessel_supervisor');
+      return res.status(400).json({ error: 'supervisor_required', message: 'Vessel supervisor name is required' });
+    }
 
     const norm = normalizeReturnedPayload(req.body);
-    if (!norm.ok) return res.status(400).json({ error: 'invalid_seal_format' });
-
-    const baseSet = buildReturnedSet(norm);
-    // reject if single is inside the same range provided
-    if (norm.s !== null && baseSet.has(norm.s) && norm.f !== null && norm.t !== null) {
-      return res.status(400).json({ error: 'payload_overlap' });
+    if (!norm.ok) {
+      console.warn('Invalid seal format in payload:', req.body);
+      return res.status(400).json({ 
+        error: 'invalid_seal_format',
+        message: 'Invalid seal number format. Please check the seal numbers provided.'
+      });
     }
+
+    const baseSet = buildReturnedSet(norm.seal_number);
 
     const pool = await poolPromise;
 
-    // 1) Must have been delivered for THIS visit
-    const eligible = await loadDeliveredSetForVisit(pool, visit);
-    const needToCheck = new Set(baseSet);
-    if (norm.damaged && norm.d !== null) needToCheck.add(norm.d);
-    if (norm.lost && norm.l !== null) needToCheck.add(norm.l);
+    try {
+      // 1) Must have been delivered for THIS visit
+      const eligible = await loadDeliveredSetForVisit(pool, visit);
+      const needToCheck = new Set(baseSet);
+      if (norm.damaged_seal_number) needToCheck.add(Number(norm.damaged_seal_number));
+      if (norm.lost_seal_number) needToCheck.add(Number(norm.lost_seal_number));
 
-    const missing = [...needToCheck].filter((n) => !eligible.has(n)).sort((a, b) => a - b);
-    if (missing.length) {
-      return res.status(409).json({ error: 'not_delivered_for_visit', seals: missing });
-    }
+      console.log('Validating seals:', {
+        totalSeals: needToCheck.size,
+        eligibleSeals: eligible.size,
+        visit
+      });
 
-    // 2) Must not have been already returned/damaged/lost for THIS visit
-    const already = await loadAlreadyReturnedForVisit(pool, visit);
-    const clashes = [...needToCheck].filter((n) => already.has(n)).sort((a, b) => a - b);
-    if (clashes.length) {
-      return res.status(409).json({ error: 'duplicate_found', duplicates: clashes });
+      const missing = [...needToCheck].filter((n) => !eligible.has(n)).sort((a, b) => a - b);
+      if (missing.length) {
+        console.warn('Seals not delivered in this visit:', {
+          missing,
+          visit
+        });
+        return res.status(409).json({ 
+          error: 'not_delivered_for_visit', 
+          seals: missing,
+          message: 'Some seals were not delivered in this visit'
+        });
+      }
+
+      // 2) Must not have been already returned/damaged/lost for THIS visit
+      const already = await loadAlreadyReturnedForVisit(pool, visit);
+      const clashes = [...needToCheck].filter((n) => already.has(n)).sort((a, b) => a - b);
+      if (clashes.length) {
+        console.warn('Duplicate seals detected:', {
+          clashes,
+          visit
+        });
+        return res.status(409).json({ 
+          error: 'duplicate_found', 
+          duplicates: clashes,
+          message: 'Some seals have already been returned in this visit'
+        });
+      }
+    } catch (err) {
+      console.error('Error validating seals:', err);
+      return res.status(500).json({ 
+        error: 'validation_error',
+        message: 'Error occurred while validating seal numbers'
+      });
     }
 
     const eff = computeEffectiveReturnedCount({
       baseSet,
-      damaged: norm.damaged,
-      lost: norm.lost,
-      d: norm.d,
-      l: norm.l,
+      damaged_seal_number: norm.damaged_seal_number,
+      lost_seal_number: norm.lost_seal_number,
     });
 
     const insert = await pool
       .request()
       .input('visit', sql.NVarChar(50), visit)
-      .input('return_seal_from', sql.BigInt, norm.f)
-      .input('return_seal_to', sql.BigInt, norm.t)
-      .input('return_single_seal', sql.BigInt, norm.s)
-      .input('damaged', sql.Bit, norm.damaged ? 1 : 0)
-      .input('lost', sql.Bit, norm.lost ? 1 : 0)
-      .input('damaged_seal', sql.BigInt, norm.d)
-      .input('lost_seal', sql.BigInt, norm.l)
+      .input('seal_number', sql.NVarChar(1000), norm.seal_number)
+      .input('damaged_seal_number', sql.NVarChar(20), norm.damaged_seal_number)
+      .input('damaged_count', sql.Int, norm.damaged_count)
+      .input('lost_seal_number', sql.NVarChar(20), norm.lost_seal_number)
+      .input('lost_count', sql.Int, norm.lost_count)
       .input('return_notes', sql.NVarChar(2000), return_notes)
       .input('vessel_supervisor', sql.NVarChar(100), vessel_supervisor.trim())
-      .input('return_user_planner', sql.NVarChar(100), return_user_planner || 'planner_user')
+      .input('user_planner', sql.NVarChar(100), user_planner || 'planner_user')
       .query(`
         INSERT INTO dbo.returned_seals(
-          visit, return_seal_from, return_seal_to, return_single_seal,
-          damaged, lost, damaged_seal, lost_seal,
-          return_notes, vessel_supervisor, return_user_planner, created_at
+          visit, seal_number,
+          damaged_seal_number, damaged_count,
+          lost_seal_number, lost_count,
+          return_notes, vessel_supervisor, user_planner, created_at
         )
         OUTPUT INSERTED.*
         VALUES(
-          @visit, @return_seal_from, @return_seal_to, @return_single_seal,
-          @damaged, @lost, @damaged_seal, @lost_seal,
-          @return_notes, @vessel_supervisor, @return_user_planner, SYSUTCDATETIME()
+          @visit, @seal_number,
+          @damaged_seal_number, @damaged_count,
+          @lost_seal_number, @lost_count,
+          @return_notes, @vessel_supervisor, @user_planner, SYSUTCDATETIME()
         );
       `);
 
     const row = insert.recordset[0];
-    await logAudit('returned_seals', 'INSERT', row.id, null, row, return_user_planner || 'planner_user');
+    await logAudit('returned_seals', 'INSERT', row.id, null, row, user_planner || 'planner_user');
     res.status(201).json({ ...row, ...eff });
   } catch (err) {
     console.error('POST /returned-seals', err);
@@ -248,13 +315,11 @@ router.put('/:id', async (req, res) => {
 
     const merged = {
       visit: req.body.visit ?? before.visit,
-      return_seal_from: req.body.return_seal_from ?? before.return_seal_from,
-      return_seal_to: req.body.return_seal_to ?? before.return_seal_to,
-      return_single_seal: req.body.return_single_seal ?? before.return_single_seal,
-      damaged: req.body.damaged ?? before.damaged,
-      lost: req.body.lost ?? before.lost,
-      damaged_seal: req.body.damaged_seal ?? before.damaged_seal,
-      lost_seal: req.body.lost_seal ?? before.lost_seal,
+      seal_number: req.body.seal_number ?? before.seal_number,
+      damaged_seal_number: req.body.damaged_seal_number ?? before.damaged_seal_number,
+      damaged_count: req.body.damaged_count ?? before.damaged_count,
+      lost_seal_number: req.body.lost_seal_number ?? before.lost_seal_number,
+      lost_count: req.body.lost_count ?? before.lost_count,
       vessel_supervisor: (req.body.vessel_supervisor ?? before.vessel_supervisor),
     };
 
@@ -263,16 +328,13 @@ router.put('/:id', async (req, res) => {
     const norm = normalizeReturnedPayload(merged);
     if (!norm.ok) return res.status(400).json({ error: 'invalid_seal_format' });
 
-    const baseSet = buildReturnedSet(norm);
-    if (norm.s !== null && baseSet.has(norm.s) && norm.f !== null && norm.t !== null) {
-      return res.status(400).json({ error: 'payload_overlap' });
-    }
+    const baseSet = buildReturnedSet(norm.seal_number);
 
     // delivered prerequisite (same visit)
     const eligible = await loadDeliveredSetForVisit(pool, merged.visit);
     const needToCheck = new Set(baseSet);
-    if (norm.damaged && norm.d !== null) needToCheck.add(norm.d);
-    if (norm.lost && norm.l !== null) needToCheck.add(norm.l);
+    if (norm.damaged_seal_number) needToCheck.add(Number(norm.damaged_seal_number));
+    if (norm.lost_seal_number) needToCheck.add(Number(norm.lost_seal_number));
 
     const missing = [...needToCheck].filter((n) => !eligible.has(n)).sort((a, b) => a - b);
     if (missing.length) {
@@ -289,33 +351,30 @@ router.put('/:id', async (req, res) => {
     await pool
       .request()
       .input('id', sql.Int, id)
-      .input('return_seal_from', sql.BigInt, req.body.return_seal_from ?? null)
-      .input('return_seal_to', sql.BigInt, req.body.return_seal_to ?? null)
-      .input('return_single_seal', sql.BigInt, req.body.return_single_seal ?? null)
-      .input('damaged', sql.Bit, req.body.damaged ? 1 : 0)
-      .input('lost', sql.Bit, req.body.lost ? 1 : 0)
-      .input('damaged_seal', sql.BigInt, req.body.damaged_seal ?? null)
-      .input('lost_seal', sql.BigInt, req.body.lost_seal ?? null)
-      .input('return_notes', sql.NVarChar(2000), req.body.return_notes ?? null)
+      .input('seal_number', sql.NVarChar(1000), merged.seal_number)
+      .input('damaged_seal_number', sql.NVarChar(20), merged.damaged_seal_number)
+      .input('damaged_count', sql.Int, merged.damaged_count)
+      .input('lost_seal_number', sql.NVarChar(20), merged.lost_seal_number)
+      .input('lost_count', sql.Int, merged.lost_count)
+      .input('return_notes', sql.NVarChar(2000), req.body.return_notes ?? before.return_notes)
       .input('vessel_supervisor', sql.NVarChar(100), merged.vessel_supervisor.trim())
       .input('visit', sql.NVarChar(50), merged.visit)
-      .input('return_user_planner', sql.NVarChar(100), req.body.return_user_planner ?? changedBy)
+      .input('user_planner', sql.NVarChar(100), req.body.user_planner ?? changedBy)
       .query(`
         UPDATE dbo.returned_seals
-        SET return_seal_from=@return_seal_from, return_seal_to=@return_seal_to, return_single_seal=@return_single_seal,
-            damaged=@damaged, lost=@lost, damaged_seal=@damaged_seal, lost_seal=@lost_seal,
+        SET seal_number=@seal_number,
+            damaged_seal_number=@damaged_seal_number, damaged_count=@damaged_count,
+            lost_seal_number=@lost_seal_number, lost_count=@lost_count,
             return_notes=@return_notes, vessel_supervisor=@vessel_supervisor,
-            visit=@visit, return_user_planner=@return_user_planner
+            visit=@visit, user_planner=@user_planner
         WHERE id=@id;
       `);
 
     const after = await getRow('returned_seals', 'id', id);
     const eff = computeEffectiveReturnedCount({
       baseSet,
-      damaged: norm.damaged,
-      lost: norm.lost,
-      d: norm.d,
-      l: norm.l,
+      damaged_seal_number: norm.damaged_seal_number,
+      lost_seal_number: norm.lost_seal_number,
     });
 
     await logAudit('returned_seals', 'UPDATE', id, before, after, changedBy);
