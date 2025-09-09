@@ -1,4 +1,4 @@
-//for homepage
+//for homepage script.js
 
 document.addEventListener('DOMContentLoaded', () => {
   const tableBody = document.getElementById('table-body');

@@ -1,15 +1,14 @@
-// backend/routes/vessels.js
-//file that has the api to get VesselVisitSeal data
+
 // backend/routes/vessels.js
 const express = require('express');
 const router = express.Router();
-const { database, sql } = require('../db/db');
+const { poolPromise, sql } = require('../db/db');
 
 // GET /api/vessels - Fetch all vessel visits
 router.get('/', async (req, res) => {
   try {
     const pool= await poolPromise;
-    const result = await pool.query(`
+    const result = await pool.request().query(`
       SELECT 
         VesselRefNo,
         Visit,

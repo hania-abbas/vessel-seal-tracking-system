@@ -1,5 +1,5 @@
 // backend/auditHelper.js
-// inserting audit logs 
+//changed 
 const { database, sql } = require('./db/db');
 
 class AuditHelper {
@@ -17,7 +17,16 @@ class AuditHelper {
     }
   }
 
-  async logAudit(tableName, actionType, recordId, oldData, newData, changedBy, additionalInfo = {}) {
+  /**
+   * Logs an audit event using the stored procedure sp_insert_audit_log.
+   * @param {string} tableName 
+   * @param {string} actionType 
+   * @param {number|null} recordId 
+   * @param {object|null} oldData 
+   * @param {object|null} newData 
+   * @param {string} changedBy 
+   */
+  async logAudit(tableName, actionType, recordId, oldData, newData, changedBy) {
     if (!this.initialized) {
       console.warn('Audit helper not initialized, skipping audit log');
       return;
@@ -25,27 +34,15 @@ class AuditHelper {
 
     try {
       const pool = await database.getPool();
-      
+
       await pool.request()
-        .input('tableName', sql.VarChar(100), tableName)
-        .input('actionType', sql.VarChar(20), actionType)
-        .input('recordId', sql.Int, recordId)
-        .input('oldData', sql.NVarChar(sql.MAX), oldData ? JSON.stringify(oldData) : null)
-        .input('newData', sql.NVarChar(sql.MAX), newData ? JSON.stringify(newData) : null)
-        .input('changedBy', sql.VarChar(255), changedBy || 'system')
-        .input('userIp', sql.VarChar(45), additionalInfo.ip || null)
-        .input('userAgent', sql.VarChar(500), additionalInfo.userAgent || null)
-        .input('correlationId', sql.VarChar(100), additionalInfo.correlationId || null)
-        .query(`
-          INSERT INTO audit_log (
-            table_name, action_type, record_id, old_data, new_data, 
-            changed_by, user_ip, user_agent, correlation_id, change_timestamp
-          ) 
-          VALUES (
-            @tableName, @actionType, @recordId, @oldData, @newData,
-            @changedBy, @userIp, @userAgent, @correlationId, SYSUTCDATETIME()
-          )
-        `);
+        .input('table_name', sql.VarChar(100), tableName)
+        .input('action_type', sql.VarChar(10), actionType)
+        .input('record_id', sql.Int, recordId)
+        .input('changed_by', sql.VarChar(100), changedBy || 'unknown')
+        .input('old_data', sql.NVarChar(sql.MAX), oldData ? JSON.stringify(oldData) : null)
+        .input('new_data', sql.NVarChar(sql.MAX), newData ? JSON.stringify(newData) : null)
+        .execute('sp_insert_audit_log');
 
     } catch (error) {
       console.error('📝 Audit log failed:', error.message);
@@ -53,6 +50,9 @@ class AuditHelper {
     }
   }
 
+  /**
+   * Gets a row from any table by primary key.
+   */
   async getRow(table, pkName, id) {
     try {
       const pool = await database.getPool();
@@ -62,7 +62,6 @@ class AuditHelper {
           SELECT * FROM ${table} 
           WHERE ${pkName} = @id
         `);
-      
       return result.recordset[0] || null;
     } catch (error) {
       console.error('Error getting row:', error);
@@ -70,6 +69,9 @@ class AuditHelper {
     }
   }
 
+  /**
+   * Gets audit logs for a specific table and record.
+   */
   async getAuditLogs(tableName, recordId, limit = 100) {
     try {
       const pool = await database.getPool();
@@ -80,12 +82,11 @@ class AuditHelper {
         .query(`
           SELECT TOP (@limit) 
             change_timestamp, action_type, changed_by, 
-            old_data, new_data, user_ip, user_agent
+            old_data, new_data
           FROM audit_log 
           WHERE table_name = @tableName AND record_id = @recordId
           ORDER BY change_timestamp DESC
         `);
-      
       return result.recordset;
     } catch (error) {
       console.error('Error getting audit logs:', error);

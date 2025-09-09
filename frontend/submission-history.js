@@ -1,4 +1,5 @@
 // frontend/submission-history.js
+//may delete this 
 
 class SubmissionHistory {
     constructor() {
@@ -135,5 +136,3 @@ class SubmissionHistory {
 const submissionHistory = new SubmissionHistory();
 window.submissionHistory = submissionHistory;
 
-// Export the singleton
-export default submissionHistory;

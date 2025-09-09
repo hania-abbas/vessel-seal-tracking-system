@@ -1,7 +1,8 @@
 // backend/routes/sealLog.js
+// only delivered is shown or also returned seals???? make sure the refresh button is functional
 const express = require('express');
 const router = express.Router();
-const { database, sql } = require('../db/db');
+const { poolPromise, sql } = require('../db/db');
 
 // GET /api/seal-log?visit=...&limit=200
 router.get('/', async (req, res) => {
@@ -10,7 +11,7 @@ router.get('/', async (req, res) => {
   try {
     const pool = await poolPromise;
 
-    const query = `
+    let query = `
       SELECT TOP (@lim)
         change_timestamp,
         table_name,
@@ -19,14 +20,17 @@ router.get('/', async (req, res) => {
         COALESCE(new_data, old_data) AS payload
       FROM dbo.audit_log
       WHERE table_name IN ('delivered_seals','returned_seals')
-        ${visit ? `AND JSON_VALUE(COALESCE(new_data, old_data), '$.visit') = @visit` : ''}
-      ORDER BY change_timestamp DESC;
     `;
+    if (visit) {
+      query += ` AND JSON_VALUE(COALESCE(new_data, old_data), '$.visit') = @visit`;
+    }
+    query += ' ORDER BY change_timestamp DESC;';
 
-    const r = await pool.request()
-      .input('lim', sql.Int, Number(limit))
-      .input('visit', sql.NVarChar(50), visit || null)
-      .query(query);
+    const request = pool.request();
+    request.input('lim', sql.Int, Number(limit));
+    if (visit) request.input('visit', sql.NVarChar(50), visit);
+
+    const r = await request.query(query);
 
     // format each row to a readable line
     const lines = r.recordset.map(row => {
@@ -38,25 +42,39 @@ router.get('/', async (req, res) => {
 
       if (row.table_name === 'delivered_seals') {
         const seal =
-          p.single_seal ? `Seal #${p.single_seal}` :
-          (p.seal_from && p.seal_to) ? `Seals ${p.seal_from}–${p.seal_to}` :
-          (p.seal_number ? `Seal #${p.seal_number}` : 'Seals');
+          p.seal_number ? `Seal #${p.seal_number}` :
+          (p.single_seal ? `Seal #${p.single_seal}` :
+          (p.seal_from && p.seal_to) ? `Seals ${p.seal_from}–${p.seal_to}` : 'Seals');
         const extra = p.delivered_notes ? ` — ${p.delivered_notes}` : '';
         const sup = p.vessel_supervisor ? ` by ${p.vessel_supervisor}` : '';
+        if (row.action_type === 'deleted') {
+          return `[${t}] ${seal} delivery DELETED by ${who}${sup}${extra}`;
+        } else if (row.action_type === 'updated') {
+          return `[${t}] ${seal} delivery UPDATED by ${who}${sup}${extra}`;
+        }
         return `[${t}] ${seal} delivered by ${who}${sup}${extra}`;
       } else {
         // returned_seals
-        const sup = p.return_vessel_superior || p.vessel_supervisor;
+        const sup = p.vessel_supervisor;
         const supTxt = sup ? ` by ${sup}` : '';
         const extra = p.return_notes ? ` — ${p.return_notes}` : '';
 
-        if (p.damaged) return `[${t}] Seal #${p.damaged_seal ?? ''} returned DAMAGED by ${who}${supTxt}${extra}`;
-        if (p.lost)    return `[${t}] Seal #${p.lost_seal ?? ''} reported LOST by ${who}${supTxt}${extra}`;
+        if (row.action_type === 'deleted') {
+          return `[${t}] Seal #${p.seal_number ?? ''} return DELETED by ${who}${supTxt}${extra}`;
+        } else if (row.action_type === 'updated') {
+          return `[${t}] Seal #${p.seal_number ?? ''} return UPDATED by ${who}${supTxt}${extra}`;
+        }
+
+        // If there are damaged/lost
+        if (p.damaged_count > 0)
+          return `[${t}] Damaged seals (${p.damaged_seal_number}) returned by ${who}${supTxt}${extra}`;
+        if (p.lost_count > 0)
+          return `[${t}] Lost seals (${p.lost_seal_number}) reported by ${who}${supTxt}${extra}`;
 
         const seal =
-          p.return_single_seal ? `Seal #${p.return_single_seal}` :
-          (p.return_seal_from && p.return_seal_to) ? `Seals ${p.return_seal_from}–${p.return_seal_to}` :
-          (p.seal_number ? `Seal #${p.seal_number}` : 'Seals');
+          p.seal_number ? `Seal #${p.seal_number}` :
+          (p.return_single_seal ? `Seal #${p.return_single_seal}` :
+          (p.return_seal_from && p.return_seal_to) ? `Seals ${p.return_seal_from}–${p.return_seal_to}` : 'Seals');
         return `[${t}] ${seal} returned by ${who}${supTxt}${extra}`;
       }
     });

@@ -1,5 +1,5 @@
 // frontend/submission-state.js
-// frontend/submission-state.js
+//maybe delete this 
 
 class SubmissionState {
     constructor() {

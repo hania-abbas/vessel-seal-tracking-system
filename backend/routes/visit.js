@@ -1,7 +1,7 @@
 //visit.js
 const express = require('express');
 const router = express.Router();
-const { database, sql } = require('../db/db');
+const { poolPromise, sql } = require('../db/db');
 
 // GET /api/visits/active
 router.get('/active', async (req, res) => {

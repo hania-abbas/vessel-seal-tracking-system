@@ -1,308 +1,258 @@
-// backend/routes/delivered.js
+//delivered.js
 const express = require('express');
 const router = express.Router();
-const { database, sql } = require('../db/db');
-const { logAudit, getRow } = require('../auditHelper');
+const { poolPromise, sql } = require('../db/db');
+const auditHelper = require('../auditHelper');
 
-/* ---------------- strict validators ---------------- */
-const RE_SEAL = /^[0-9]{6,9}$/; // digits only, 6–9
-const isSeal = (s) => RE_SEAL.test(String(s ?? '').trim());
-const nonEmpty = (s) => String(s ?? '').trim().length > 0;
-
-function normalizeDeliveredPayload({ delivered_from, delivered_to, delivered_single }) {
-  const hasRange = delivered_from != null || delivered_to != null;
-  const hasSingle = delivered_single != null && String(delivered_single) !== '';
-
-  if (hasRange) {
-    if (!isSeal(delivered_from) || !isSeal(delivered_to)) return { ok: false };
-    if (Number(delivered_to) < Number(delivered_from)) return { ok: false };
-  }
-  if (hasSingle) {
-    if (!isSeal(delivered_single)) return { ok: false };
-  }
-  if (!hasRange && !hasSingle) return { ok: false };
-
-  return {
-    ok: true,
-    f: hasRange ? Number(delivered_from) : null,
-    t: hasRange ? Number(delivered_to) : null,
-    s: hasSingle ? Number(delivered_single) : null,
-  };
+// Helper: Validate and sanitize delivered seal input
+function validateDeliveredSealInput({ visit, seal_number, vessel_supervisor }) {
+  const errors = [];
+  if (!visit || typeof visit !== 'string' || visit.length < 3) errors.push('visit_required');
+  if (!seal_number || typeof seal_number !== 'string' || seal_number.length < 6) errors.push('seal_number_required');
+  if (!vessel_supervisor || typeof vessel_supervisor !== 'string' || vessel_supervisor.length < 2) errors.push('supervisor_required');
+  return errors;
 }
 
-const expandRange = (a, b) => {
-  const out = [];
-  for (let n = a; n <= b; n++) out.push(n);
-  return out;
-};
-function buildDeliveredSet({ f, t, s }) {
-  const set = new Set();
-  if (f !== null && t !== null) expandRange(f, t).forEach((n) => set.add(n));
-  if (s !== null) set.add(s);
-  return set;
-}
-function computeDeliveredCount(set) {
-  return { deliveredCount: set.size, deliveredList: [...set] };
+function sanitizeText(text, max = 2000) {
+  if (!text) return null;
+  return String(text).replace(/[<>]/g, '').substring(0, max);
 }
 
-/* ---------- GLOBAL duplicates: Delivered must be unique system-wide ---------- */
-async function loadUsedSealsFromDelivered(pool, { excludeId = null } = {}) {
-  const used = new Set();
-  const q = await pool.request().query(`
-    SELECT id, seal_number, total_count
-    FROM dbo.delivered_seals
-  `);
-  for (const r of q.recordset) {
-    if (excludeId && r.id === excludeId) continue;
-    if (r.seal_number) {
-      if (r.seal_number.includes('-')) {
-        const [from, to] = r.seal_number.split('-').map(Number);
-        expandRange(from, to).forEach((n) => used.add(n));
-      } else {
-        used.add(Number(r.seal_number));
-      }
+// Helper: parse seal input "1234516-1234518,8812340"
+function parseSealEntries(sealInput) {
+  const entries = [];
+  if (!sealInput) return entries;
+  for (const part of sealInput.split(',').map(s => s.trim()).filter(Boolean)) {
+    if (/^\d{6,9}-\d{6,9}$/.test(part)) {
+      const [start, end] = part.split('-').map(Number);
+      if (start > 0 && end >= start) entries.push({ seal_number: part, total_count: end - start + 1 });
+    } else if (/^\d{6,9}$/.test(part)) {
+      entries.push({ seal_number: part, total_count: 1 });
     }
   }
-  return used;
-}
-async function assertNoDeliveredDupes(pool, newSet, { excludeId = null } = {}) {
-  const used = await loadUsedSealsFromDelivered(pool, { excludeId });
-  const dups = [...newSet].filter((n) => used.has(n)).sort((a, b) => a - b);
-  if (dups.length) {
-    const err = new Error('duplicate_found');
-    err.status = 409;
-    err.payload = { error: 'duplicate_found', duplicates: dups };
-    throw err;
-  }
-}
-function respondDupOrThrow(res, err) {
-  if (err && err.status === 409 && err.payload) return res.status(409).json(err.payload);
-  throw err;
+  return entries;
 }
 
-/* ---------------- LIST ---------------- */
-router.get('/', async (req, res) => {
-  try {
-    const { visit } = req.query;
-    if (!visit) return res.status(400).json({ error: 'visit_required' });
-
-    const pool = await poolPromise;
-    const { recordset } = await pool
-      .request()
-      .input('visit', sql.NVarChar(50), visit)
-      .query(`
-        SELECT id, visit,
-               seal_number, total_count,
-               delivered_notes, vessel_supervisor, user_planner,
-               CONVERT(varchar(19), created_at, 120) AS created_at
-        FROM dbo.delivered_seals
-        WHERE visit=@visit
-        ORDER BY id DESC;
-      `);
-
-    res.json(recordset);
-  } catch (err) {
-    console.error('GET /delivered-seals', err);
-    res.status(500).json({ error: 'server_error' });
-  }
-});
-
-/* ---------------- GET ONE ---------------- */
-router.get('/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad_id' });
-
-    const pool = await poolPromise;
-    const { recordset } = await pool
-      .request()
-      .input('id', sql.Int, id)
-      .query(`
-        SELECT id, visit,
-               delivered_from, delivered_to, delivered_single,
-               delivered_notes, vessel_supervisor, delivered_user_planner,
-               CONVERT(varchar(19), created_at, 120) AS created_at
-        FROM dbo.delivered_seals
-        WHERE id=@id;
-      `);
-
-    if (!recordset.length) return res.status(404).json({ error: 'not_found' });
-    res.json(recordset[0]);
-  } catch (err) {
-    console.error('GET /delivered-seals/:id', err);
-    res.status(500).json({ error: 'server_error' });
-  }
-});
-
-/* ---------------- CREATE ---------------- */
+// --- CREATE ---
 router.post('/', async (req, res) => {
+  const {
+    visit,
+    seal_number, // e.g. "1234516-1234518,8812340"
+    vessel_supervisor,
+    user_planner,
+    created_at,
+    delivered_notes
+  } = req.body;
+
+  const errors = validateDeliveredSealInput({ visit, seal_number, vessel_supervisor });
+  if (errors.length) return res.status(400).json({ error: 'validation', details: errors });
+
   try {
-    console.log('Received POST /delivered-seals payload:', JSON.stringify(req.body, null, 2));
-    const { visit, delivered_notes = null, vessel_supervisor, delivered_user_planner = null } = req.body;
-    
-    // Validate required fields
-    if (!visit) {
-      console.log('Missing visit ID');
-      return res.status(400).json({ error: 'visit_required' });
-    }
-    if (!nonEmpty(vessel_supervisor)) {
-      console.log('Missing vessel supervisor');
-      return res.status(400).json({ error: 'supervisor_required' });
-    }
-
-    const norm = normalizeDeliveredPayload(req.body);
-    console.log('Normalized payload:', norm);
-    if (!norm.ok) return res.status(400).json({ error: 'invalid_seal_format' });
-
-    const newSet = buildDeliveredSet(norm);
     const pool = await poolPromise;
+    const sealEntries = parseSealEntries(seal_number);
 
-    // block if any already delivered anywhere (global uniqueness)
-    try {
-      await assertNoDeliveredDupes(pool, newSet);
-    } catch (e) {
-      return respondDupOrThrow(res, e);
+    if (!sealEntries.length) return res.status(400).json({ error: 'no_valid_seal_entries' });
+
+    const duplicates = [];
+    for (const entry of sealEntries) {
+      const dupCheck = await pool.request()
+        .input('visit', sql.VarChar, visit)
+        .input('seal_number', sql.VarChar, entry.seal_number)
+        .query('SELECT COUNT(*) AS cnt FROM delivered_seals WHERE visit=@visit AND seal_number=@seal_number');
+      if (dupCheck.recordset[0].cnt > 0) duplicates.push(entry.seal_number);
+    }
+    if (duplicates.length) {
+      return res.status(409).json({ error: 'duplicate', message: 'Duplicate seal(s)', duplicates });
     }
 
-    const { deliveredCount } = computeDeliveredCount(newSet);
-
-    // Generate array of individual seal numbers
-    const sealNumbers = [];
-    if (norm.f !== null && norm.t !== null) {
-      for (let i = norm.f; i <= norm.t; i++) {
-        sealNumbers.push(i.toString());
-      }
-    } else if (norm.s !== null) {
-      sealNumbers.push(norm.s.toString());
-    }
-
-    // Insert each seal number as a separate record
-    const insertPromises = sealNumbers.map(sealNum => 
-      pool.request()
-        .input('visit', sql.NVarChar(50), visit)
-        .input('seal_number', sql.NVarChar(100), sealNum)
-        .input('total_count', sql.Int, 1)
-        .input('delivered_notes', sql.NVarChar(2000), delivered_notes)
-        .input('vessel_supervisor', sql.NVarChar(100), vessel_supervisor.trim())
-        .input('user_planner', sql.NVarChar(100), delivered_user_planner || 'planner_user')
+    for (const entry of sealEntries) {
+      const result = await pool.request()
+        .input('visit', sql.VarChar, visit)
+        .input('seal_number', sql.VarChar, entry.seal_number)
+        .input('total_count', sql.Int, entry.total_count)
+        .input('vessel_supervisor', sql.VarChar, sanitizeText(vessel_supervisor, 100))
+        .input('user_planner', sql.VarChar, sanitizeText(user_planner, 100))
+        .input('created_at', sql.DateTime, created_at || new Date())
+        .input('delivered_notes', sql.VarChar, sanitizeText(delivered_notes))
         .query(`
-          INSERT INTO dbo.delivered_seals(
-            visit, seal_number, total_count,
-            delivered_notes, vessel_supervisor, user_planner, created_at
-          )
-          OUTPUT INSERTED.*
-          VALUES(
-            @visit, @seal_number, @total_count,
-            @delivered_notes, @vessel_supervisor, @user_planner, SYSUTCDATETIME()
-          );
-        `)
-    );
+          INSERT INTO delivered_seals
+            (visit, seal_number, total_count, vessel_supervisor, user_planner, created_at, delivered_notes)
+          VALUES
+            (@visit, @seal_number, @total_count, @vessel_supervisor, @user_planner, @created_at, @delivered_notes)
+        `);
 
-    // Execute all inserts
-    const results = await Promise.all(insertPromises);
-    const insertedRows = results.map(r => r.recordset[0]);
-
-    // Log audit for each inserted row
-    for (const row of insertedRows) {
-      await logAudit('delivered_seals', 'INSERT', row.id, null, row, delivered_user_planner || 'planner_user');
+      await auditHelper.logAudit(
+        'delivered_seals',
+        'delivered',
+        null,
+        null,
+        {
+          visit,
+          seal_number: entry.seal_number,
+          total_count: entry.total_count,
+          vessel_supervisor,
+          user_planner,
+          delivered_notes
+        },
+        user_planner
+      );
     }
-    
-    res.status(201).json({ 
-      insertedRows,
-      count: insertedRows.length,
-      firstId: insertedRows[0]?.id,
-      lastId: insertedRows[insertedRows.length - 1]?.id
-    });
+
+    res.status(201).json({ message: 'Seal(s) delivered and saved!', count: sealEntries.length });
   } catch (err) {
-    console.error('POST /delivered-seals error:', {
-      message: err.message,
-      stack: err.stack,
-      code: err.code,
-      name: err.name
-    });
+    console.error('Error delivering seal:', err);
     res.status(500).json({ error: 'server_error', message: err.message });
   }
 });
 
-/* ---------------- UPDATE ---------------- */
-router.put('/:id', async (req, res) => {
-  const id = Number(req.params.id);
-  const changedBy = req.body?.updatedBy || req.user?.username || 'planner_user';
-
+// --- READ: Get all delivered seals ---
+router.get('/', async (req, res) => {
   try {
     const pool = await poolPromise;
-    const before = await getRow('delivered_seals', 'id', id);
-    if (!before) return res.status(404).json({ error: 'Row not found' });
-
-    const merged = {
-      visit: req.body.visit ?? before.visit,
-      delivered_from: req.body.delivered_from ?? before.delivered_from,
-      delivered_to: req.body.delivered_to ?? before.delivered_to,
-      delivered_single: req.body.delivered_single ?? before.delivered_single,
-      vessel_supervisor: (req.body.vessel_supervisor ?? before.vessel_supervisor),
-    };
-
-    if (!nonEmpty(merged.vessel_supervisor)) return res.status(400).json({ error: 'supervisor_required' });
-
-    const norm = normalizeDeliveredPayload(merged);
-    if (!norm.ok) return res.status(400).json({ error: 'invalid_seal_format' });
-
-    const newSet = buildDeliveredSet(norm);
-
-    // block if would collide with another delivered row
-    try {
-      await assertNoDeliveredDupes(pool, newSet, { excludeId: id });
-    } catch (e) {
-      return respondDupOrThrow(res, e);
-    }
-
-    await pool
-      .request()
-      .input('id', sql.Int, id)
-      .input('delivered_from', sql.BigInt, req.body.delivered_from ?? null)
-      .input('delivered_to', sql.BigInt, req.body.delivered_to ?? null)
-      .input('delivered_single', sql.BigInt, req.body.delivered_single ?? null)
-      .input('delivered_notes', sql.NVarChar(2000), req.body.delivered_notes ?? null)
-      .input('vessel_supervisor', sql.NVarChar(100), merged.vessel_supervisor.trim())
-      .input('visit', sql.NVarChar(50), merged.visit)
-      .input('delivered_user_planner', sql.NVarChar(100), req.body.delivered_user_planner ?? changedBy)
-      .query(`
-        UPDATE dbo.delivered_seals
-        SET delivered_from=@delivered_from, delivered_to=@delivered_to, delivered_single=@delivered_single,
-            delivered_notes=@delivered_notes, vessel_supervisor=@vessel_supervisor,
-            visit=@visit, delivered_user_planner=@delivered_user_planner
-        WHERE id=@id;
-      `);
-
-    const after = await getRow('delivered_seals', 'id', id);
-    const { deliveredCount } = computeDeliveredCount(newSet);
-    await logAudit('delivered_seals', 'UPDATE', id, before, after, changedBy);
-    res.json({ ...after, deliveredCount });
+    const result = await pool.request()
+      .query('SELECT * FROM delivered_seals ORDER BY created_at DESC');
+    res.json(result.recordset);
   } catch (err) {
-    console.error('PUT /delivered-seals/:id', err);
-    res.status(500).json({ error: 'Update failed' });
+    console.error('Error fetching delivered seals:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-/* ---------------- DELETE ---------------- */
-router.delete('/:id', async (req, res) => {
+// --- READ: Get one delivered seal by ID ---
+router.get('/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    const id = Number(req.params.id);
-    if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'bad_id' });
-
     const pool = await poolPromise;
-    const before = await getRow('delivered_seals', 'id', id);
-    if (!before) return res.status(404).json({ error: 'not_found' });
-
-    const del = await pool.request().input('id', sql.Int, id).query(`
-      DELETE FROM dbo.delivered_seals OUTPUT DELETED.* WHERE id=@id;
-    `);
-
-    await logAudit('delivered_seals', 'DELETE', id, before, null, req.headers['x-user'] || 'planner_user');
-    res.json({ ok: true, deleted: del.recordset[0] });
+    const result = await pool.request()
+      .input('id', sql.Int, id)
+      .query('SELECT * FROM delivered_seals WHERE id = @id');
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: 'Seal not found' });
+    }
+    res.json(result.recordset[0]);
   } catch (err) {
-    console.error('DELETE /delivered-seals/:id', err);
-    res.status(500).json({ error: 'server_error' });
+    console.error('Error fetching delivered seal:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- UPDATE: Update delivered seal by ID ---
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const {
+    visit,
+    seal_number,
+    total_count,
+    vessel_supervisor,
+    user_planner,
+    created_at,
+    delivered_notes
+  } = req.body;
+
+  const errors = validateDeliveredSealInput({ visit, seal_number, vessel_supervisor });
+  if (errors.length) return res.status(400).json({ error: 'validation', details: errors });
+
+  try {
+    const pool = await poolPromise;
+
+    // Check for duplicate seal_number except for this record
+    const dupCheck = await pool.request()
+      .input('visit', sql.VarChar, visit)
+      .input('seal_number', sql.VarChar, seal_number)
+      .input('id', sql.Int, id)
+      .query('SELECT COUNT(*) AS cnt FROM delivered_seals WHERE visit=@visit AND seal_number=@seal_number AND id<>@id');
+    if (dupCheck.recordset[0].cnt > 0) {
+      return res.status(409).json({ error: 'duplicate', message: 'Seal number already exists for this visit.' });
+    }
+
+    // Get old data for audit
+    const oldResult = await pool.request()
+      .input('id', sql.Int, id)
+      .query('SELECT * FROM delivered_seals WHERE id=@id');
+    const oldData = oldResult.recordset[0] || null;
+
+    const result = await pool.request()
+      .input('id', sql.Int, id)
+      .input('visit', sql.VarChar, visit)
+      .input('seal_number', sql.VarChar, seal_number)
+      .input('total_count', sql.Int, total_count)
+      .input('vessel_supervisor', sql.VarChar, sanitizeText(vessel_supervisor, 100))
+      .input('user_planner', sql.VarChar, sanitizeText(user_planner, 100))
+      .input('created_at', sql.DateTime, created_at || new Date())
+      .input('delivered_notes', sql.VarChar, sanitizeText(delivered_notes))
+      .query(`
+        UPDATE delivered_seals
+        SET
+          visit = @visit,
+          seal_number = @seal_number,
+          total_count = @total_count,
+          vessel_supervisor = @vessel_supervisor,
+          user_planner = @user_planner,
+          created_at = @created_at,
+          delivered_notes = @delivered_notes
+        WHERE id = @id
+      `);
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: 'Seal not found' });
+    }
+
+    await auditHelper.logAudit(
+      'delivered_seals',
+      'updated',
+      id,
+      oldData,
+      {
+        id,
+        visit,
+        seal_number,
+        total_count,
+        vessel_supervisor,
+        user_planner,
+        delivered_notes
+      },
+      user_planner
+    );
+
+    res.json({ message: 'Delivered seal updated!' });
+  } catch (err) {
+    console.error('Error updating delivered seal:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- DELETE: Delete delivered seal by ID ---
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const pool = await poolPromise;
+    // Get the old data for logging
+    const oldResult = await pool.request()
+      .input('id', sql.Int, id)
+      .query('SELECT * FROM delivered_seals WHERE id = @id');
+    const oldData = oldResult.recordset[0] ? oldResult.recordset[0] : null;
+
+    const result = await pool.request()
+      .input('id', sql.Int, id)
+      .query('DELETE FROM delivered_seals WHERE id = @id');
+
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: 'Seal not found' });
+    }
+
+    await auditHelper.logAudit(
+      'delivered_seals',
+      'deleted',
+      id,
+      oldData,
+      null,
+      oldData?.user_planner || 'unknown'
+    );
+
+    res.json({ message: 'Delivered seal deleted!' });
+  } catch (err) {
+    console.error('Error deleting delivered seal:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
