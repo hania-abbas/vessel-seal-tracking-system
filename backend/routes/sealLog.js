@@ -1,11 +1,12 @@
-// backend/routes/sealLog.js
+// backend/routes/sealLog.js *****
 // only delivered is shown or also returned seals???? make sure the refresh button is functional
 const express = require('express');
 const router = express.Router();
 const { poolPromise, sql } = require('../db/db');
+const authenticateJWT = require('../middleware/auth');
 
 // GET /api/seal-log?visit=...&limit=200
-router.get('/', async (req, res) => {
+router.get('/', authenticateJWT, async (req, res) => {
   const { visit, limit = 200 } = req.query;
 
   try {
@@ -39,6 +40,7 @@ router.get('/', async (req, res) => {
 
       const t = new Date(row.change_timestamp).toLocaleString();
       const who = row.changed_by || p.user_planner || p.return_user_planner || 'Planner';
+      const act = String(row.action_type || '').toLowerCase();
 
       if (row.table_name === 'delivered_seals') {
         const seal =
@@ -47,7 +49,7 @@ router.get('/', async (req, res) => {
           (p.seal_from && p.seal_to) ? `Seals ${p.seal_from}–${p.seal_to}` : 'Seals');
         const extra = p.delivered_notes ? ` — ${p.delivered_notes}` : '';
         const sup = p.vessel_supervisor ? ` by ${p.vessel_supervisor}` : '';
-        if (row.action_type === 'deleted') {
+        if (act.includes('delete')){
           return `[${t}] ${seal} delivery DELETED by ${who}${sup}${extra}`;
         } else if (row.action_type === 'updated') {
           return `[${t}] ${seal} delivery UPDATED by ${who}${sup}${extra}`;
@@ -55,11 +57,10 @@ router.get('/', async (req, res) => {
         return `[${t}] ${seal} delivered by ${who}${sup}${extra}`;
       } else {
         // returned_seals
-        const sup = p.vessel_supervisor;
-        const supTxt = sup ? ` by ${sup}` : '';
+        const supTxt = p.vessel_supervisor ? ` by ${p.vessel_supervisor}` : '';
         const extra = p.return_notes ? ` — ${p.return_notes}` : '';
 
-        if (row.action_type === 'deleted') {
+        if (act.includes('delete')) {
           return `[${t}] Seal #${p.seal_number ?? ''} return DELETED by ${who}${supTxt}${extra}`;
         } else if (row.action_type === 'updated') {
           return `[${t}] Seal #${p.seal_number ?? ''} return UPDATED by ${who}${supTxt}${extra}`;

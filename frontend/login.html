@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Vessel Seal | Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Local CSS (no inline styles so CSP is happy) -->
+    <link rel="stylesheet" href="login.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card">
+        <header class="card__header">
+          <div class="logo">Vessel Seal</div>
+          <p class="sub">Planner Portal</p>
+        </header>
+
+        <form id="loginForm" class="form" autocomplete="off">
+          <div class="field">
+            <label for="username">Username</label>
+            <input
+              id="username"
+              name="username"
+              type="text"
+              placeholder="planner1"
+              required
+            />
+          </div>
+
+          <div class="field">
+            <label for="password">Password</label>
+            <div class="password">
+              <input
+                id="password"
+                name="password"
+                type="password"
+                placeholder="••••••••"
+                required
+              />
+              <button class="toggle" type="button" aria-label="Show password">
+                👁
+              </button>
+            </div>
+          </div>
+
+          <button class="btn" type="submit">Sign in</button>
+
+          <p id="error" class="error" role="alert" hidden></p>
+        </form>
+
+        <footer class="card__footer">
+          <small
+            >© <span id="year"></span> CMA Beirut Terminal — Internal</small
+          >
+        </footer>
+      </section>
+    </main>
+
+    <!-- External JS only (CSP-friendly) -->
+    <script src="login.js"></script>
+  </body>
+</html>

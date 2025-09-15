@@ -1,10 +1,15 @@
 //delivered.js
+
 const express = require('express');
 const router = express.Router();
 const { poolPromise, sql } = require('../db/db');
 const auditHelper = require('../auditHelper');
 
-// Helper: Validate and sanitize delivered seal input
+const ONLY_6_9 = /^\d{6,9}$/;
+const isSeal = s => ONLY_6_9.test((s || '').trim());
+const toInt = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; }
+
+// Validation helper
 function validateDeliveredSealInput({ visit, seal_number, vessel_supervisor }) {
   const errors = [];
   if (!visit || typeof visit !== 'string' || visit.length < 3) errors.push('visit_required');
@@ -13,12 +18,34 @@ function validateDeliveredSealInput({ visit, seal_number, vessel_supervisor }) {
   return errors;
 }
 
+// Sanitizer
 function sanitizeText(text, max = 2000) {
   if (!text) return null;
   return String(text).replace(/[<>]/g, '').substring(0, max);
 }
 
-// Helper: parse seal input "1234516-1234518,8812340"
+function parseMultipleRangesAndSingles(sealInput) {
+  const ranges = [];
+  const singles = [];
+  if(!sealInput) return {ranges, singles};
+
+  const tokens = sealInput.split(/[,\s]+/).map(t => t.trim().filter(Boolean));
+  for (const t of tokens) {
+    const m = t.match(/^(\d{6,9})-(\d{6,9})$/);
+    if(m) {
+      const a = m[1], b = m[2];
+      if(isSeal(a) && isSeal(b) && toInt(b) >= toInt(a)) {
+        ranges.push({from: a, to: b, count: toInt(b) - toInt(a) + 1});
+        continue;
+      }
+    }
+    if (isSeal(t)) singles.push(t);
+  }
+  return { ranges, singles };
+}
+
+
+// Batch parser
 function parseSealEntries(sealInput) {
   const entries = [];
   if (!sealInput) return entries;
@@ -33,92 +60,111 @@ function parseSealEntries(sealInput) {
   return entries;
 }
 
-// --- CREATE ---
+// CREATE
 router.post('/', async (req, res) => {
-  const {
-    visit,
-    seal_number, // e.g. "1234516-1234518,8812340"
-    vessel_supervisor,
-    user_planner,
-    created_at,
-    delivered_notes
-  } = req.body;
-
+  const { visit, seal_number, vessel_supervisor, user_planner, created_at, delivered_notes } = req.body;
   const errors = validateDeliveredSealInput({ visit, seal_number, vessel_supervisor });
   if (errors.length) return res.status(400).json({ error: 'validation', details: errors });
 
   try {
     const pool = await poolPromise;
-    const sealEntries = parseSealEntries(seal_number);
 
-    if (!sealEntries.length) return res.status(400).json({ error: 'no_valid_seal_entries' });
+    const { ranges, singles } = parseMultipleRangesAndSingles(seal_number);
+    if (ranges.length === 0 && singles.length === 0) {
+      return res.status(400).json({ error: 'no_valid_seal_entries' });
+    }
 
+    const rangesTotal = ranges.reduce((s, r) => s + r.count, 0);
+    const singlesTotal = singles.length;
+    const overallTotal = rangesTotal + singlesTotal;
+
+    // Build rows: one per range + one row for all singles (if any)
+    const rows = [
+      ...ranges.map(r => ({ seal_number: `${r.from}-${r.to}`, total_count: overallTotal })),
+      ...(singles.length ? [{ seal_number: singles.join(','), total_count: overallTotal }] : [])
+    ];
+
+    // duplicate check within visit
     const duplicates = [];
-    for (const entry of sealEntries) {
+    for (const row of rows) {
       const dupCheck = await pool.request()
         .input('visit', sql.VarChar, visit)
-        .input('seal_number', sql.VarChar, entry.seal_number)
+        .input('seal_number', sql.VarChar, row.seal_number)
         .query('SELECT COUNT(*) AS cnt FROM delivered_seals WHERE visit=@visit AND seal_number=@seal_number');
-      if (dupCheck.recordset[0].cnt > 0) duplicates.push(entry.seal_number);
+      if (dupCheck.recordset[0].cnt > 0) duplicates.push(row.seal_number);
     }
     if (duplicates.length) {
       return res.status(409).json({ error: 'duplicate', message: 'Duplicate seal(s)', duplicates });
     }
 
-    for (const entry of sealEntries) {
-      const result = await pool.request()
-        .input('visit', sql.VarChar, visit)
-        .input('seal_number', sql.VarChar, entry.seal_number)
-        .input('total_count', sql.Int, entry.total_count)
-        .input('vessel_supervisor', sql.VarChar, sanitizeText(vessel_supervisor, 100))
-        .input('user_planner', sql.VarChar, sanitizeText(user_planner, 100))
-        .input('created_at', sql.DateTime, created_at || new Date())
-        .input('delivered_notes', sql.VarChar, sanitizeText(delivered_notes))
-        .query(`
+    // insert transactionally
+    const tx = new sql.Transaction(pool);
+    await tx.begin();
+    const inserted = [];
+    try {
+      for (const row of rows) {
+        const req1 = new sql.Request(tx);
+        req1.input('visit', sql.VarChar, visit);
+        req1.input('seal_number', sql.VarChar, row.seal_number);
+        req1.input('total_count', sql.Int, row.total_count);
+        req1.input('vessel_supervisor', sql.VarChar, sanitizeText(vessel_supervisor, 100));
+        req1.input('user_planner', sql.VarChar, sanitizeText(user_planner, 100));
+        req1.input('created_at', sql.DateTime, created_at || new Date());
+        req1.input('delivered_notes', sql.VarChar, sanitizeText(delivered_notes));
+        const result = await req1.query(`
           INSERT INTO delivered_seals
             (visit, seal_number, total_count, vessel_supervisor, user_planner, created_at, delivered_notes)
+          OUTPUT INSERTED.id
           VALUES
             (@visit, @seal_number, @total_count, @vessel_supervisor, @user_planner, @created_at, @delivered_notes)
         `);
+        const id = result.recordset[0].id;
 
-      await auditHelper.logAudit(
-        'delivered_seals',
-        'delivered',
-        null,
-        null,
-        {
-          visit,
-          seal_number: entry.seal_number,
-          total_count: entry.total_count,
-          vessel_supervisor,
-          user_planner,
-          delivered_notes
-        },
-        user_planner
-      );
-    }
+        await auditHelper.logAudit('delivered_seals', 'INSERT', id, null, {
+          visit, seal_number: row.seal_number, total_count: row.total_count,
+          vessel_supervisor, user_planner, delivered_notes
+        }, user_planner);
 
-    res.status(201).json({ message: 'Seal(s) delivered and saved!', count: sealEntries.length });
+        inserted.push({ id, seal_number: row.seal_number, total_count: row.total_count });
+      }
+      await tx.commit();
+    } catch (e) { await tx.rollback(); throw e; }
+
+    res.status(201).json({ message: 'Seal(s) delivered and saved!', inserted, overall_total: overallTotal });
   } catch (err) {
     console.error('Error delivering seal:', err);
     res.status(500).json({ error: 'server_error', message: err.message });
   }
 });
 
-// --- READ: Get all delivered seals ---
+
+// READ all
+// READ all (optionally filter by visit)
 router.get('/', async (req, res) => {
   try {
     const pool = await poolPromise;
-    const result = await pool.request()
-      .query('SELECT * FROM delivered_seals ORDER BY created_at DESC');
+    const { visit } = req.query;
+
+    let sqlText = 'SELECT * FROM delivered_seals';
+    const request = pool.request();
+
+    if (visit) {
+      sqlText += ' WHERE visit=@visit';
+      request.input('visit', sql.VarChar, visit);
+    }
+
+    sqlText += ' ORDER BY created_at DESC';
+
+    const result = await request.query(sqlText);
     res.json(result.recordset);
   } catch (err) {
     console.error('Error fetching delivered seals:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'server_error', message: err.message });
   }
 });
 
-// --- READ: Get one delivered seal by ID ---
+
+// READ one
 router.get('/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -136,92 +182,82 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// --- UPDATE: Update delivered seal by ID ---
+// UPDATE ************
 router.put('/:id', async (req, res) => {
   const { id } = req.params;
-  const {
-    visit,
-    seal_number,
-    total_count,
-    vessel_supervisor,
-    user_planner,
-    created_at,
-    delivered_notes
-  } = req.body;
-
+  const { visit, seal_number, vessel_supervisor, user_planner, created_at, delivered_notes } = req.body;
   const errors = validateDeliveredSealInput({ visit, seal_number, vessel_supervisor });
   if (errors.length) return res.status(400).json({ error: 'validation', details: errors });
 
   try {
     const pool = await poolPromise;
 
-    // Check for duplicate seal_number except for this record
-    const dupCheck = await pool.request()
-      .input('visit', sql.VarChar, visit)
-      .input('seal_number', sql.VarChar, seal_number)
-      .input('id', sql.Int, id)
-      .query('SELECT COUNT(*) AS cnt FROM delivered_seals WHERE visit=@visit AND seal_number=@seal_number AND id<>@id');
-    if (dupCheck.recordset[0].cnt > 0) {
-      return res.status(409).json({ error: 'duplicate', message: 'Seal number already exists for this visit.' });
+    const oldResult = await pool.request().input('id', sql.Int, id).query('SELECT * FROM delivered_seals WHERE id=@id');
+    if (!oldResult.recordset.length) return res.status(404).json({ error: 'not_found' });
+    const oldData = oldResult.recordset[0];
+
+    const { ranges, singles } = parseMultipleRangesAndSingles(seal_number);
+    if (ranges.length === 0 && singles.length === 0) {
+      return res.status(400).json({ error: 'no_valid_seal_entries' });
     }
 
-    // Get old data for audit
-    const oldResult = await pool.request()
-      .input('id', sql.Int, id)
-      .query('SELECT * FROM delivered_seals WHERE id=@id');
-    const oldData = oldResult.recordset[0] || null;
+    const overallTotal = ranges.reduce((s, r) => s + r.count, 0) + singles.length;
 
-    const result = await pool.request()
-      .input('id', sql.Int, id)
-      .input('visit', sql.VarChar, visit)
-      .input('seal_number', sql.VarChar, seal_number)
-      .input('total_count', sql.Int, total_count)
-      .input('vessel_supervisor', sql.VarChar, sanitizeText(vessel_supervisor, 100))
-      .input('user_planner', sql.VarChar, sanitizeText(user_planner, 100))
-      .input('created_at', sql.DateTime, created_at || new Date())
-      .input('delivered_notes', sql.VarChar, sanitizeText(delivered_notes))
-      .query(`
-        UPDATE delivered_seals
-        SET
-          visit = @visit,
-          seal_number = @seal_number,
-          total_count = @total_count,
-          vessel_supervisor = @vessel_supervisor,
-          user_planner = @user_planner,
-          created_at = @created_at,
-          delivered_notes = @delivered_notes
-        WHERE id = @id
-      `);
+    const rows = [
+      ...ranges.map(r => ({ seal_number: `${r.from}-${r.to}`, total_count: overallTotal })),
+      ...(singles.length ? [{ seal_number: singles.join(','), total_count: overallTotal }] : [])
+    ];
 
-    if (result.rowsAffected[0] === 0) {
-      return res.status(404).json({ error: 'Seal not found' });
-    }
+    // dup check excluding the row being replaced
+    for (const row of rows) {
+      const dup = await pool.request()
+        .input('visit', sql.VarChar, visit)
+        .input('seal_number', sql.VarChar, row.seal_number)
+        .input('id', sql.Int, id)
+        .query('SELECT COUNT(*) AS cnt FROM delivered_seals WHERE visit=@visit AND seal_number=@seal_number AND id<>@id');
+      if (dup.recordset[0].cnt > 0) {
+        return res.status(409).json({ error: 'duplicate', message: `Seal number already exists: ${row.seal_number}` });
+      }
+    }//maybe stored procedure
+    const tx = new sql.Transaction(pool);
+    await tx.begin();
+    const inserted = [];
+    try {
+      await new sql.Request(tx).input('id', sql.Int, id).query('DELETE FROM delivered_seals WHERE id=@id');
 
-    await auditHelper.logAudit(
-      'delivered_seals',
-      'updated',
-      id,
-      oldData,
-      {
-        id,
-        visit,
-        seal_number,
-        total_count,
-        vessel_supervisor,
-        user_planner,
-        delivered_notes
-      },
-      user_planner
-    );
+      for (const row of rows) {
+        const req1 = new sql.Request(tx);
+        req1.input('visit', sql.VarChar, visit);
+        req1.input('seal_number', sql.VarChar, row.seal_number);
+        req1.input('total_count', sql.Int, row.total_count);
+        req1.input('vessel_supervisor', sql.VarChar, sanitizeText(vessel_supervisor, 100));
+        req1.input('user_planner', sql.VarChar, sanitizeText(user_planner, 100));
+        req1.input('created_at', sql.DateTime, created_at || new Date());
+        req1.input('delivered_notes', sql.VarChar, sanitizeText(delivered_notes));
+        const result = await req1.query(`
+          INSERT INTO delivered_seals
+            (visit, seal_number, total_count, vessel_supervisor, user_planner, created_at, delivered_notes)
+          OUTPUT INSERTED.id
+          VALUES
+            (@visit, @seal_number, @total_count, @vessel_supervisor, @user_planner, @created_at, @delivered_notes)
+        `);
+        inserted.push({ id: result.recordset[0].id, visit, ...row });
+      }
 
-    res.json({ message: 'Delivered seal updated!' });
+      await tx.commit();
+    } catch (e) { await tx.rollback(); throw e; }
+
+    await auditHelper.logAudit('delivered_seals', 'UPDATE', id, oldData, { new_rows: inserted }, user_planner);
+
+    res.json({ message: 'Delivered seal updated!', replaced: inserted, overall_total: overallTotal });
   } catch (err) {
     console.error('Error updating delivered seal:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'server_error', message: err.message });
   }
 });
 
-// --- DELETE: Delete delivered seal by ID ---
+
+// DELETE
 router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -242,7 +278,7 @@ router.delete('/:id', async (req, res) => {
 
     await auditHelper.logAudit(
       'delivered_seals',
-      'deleted',
+      'DELETE',
       id,
       oldData,
       null,

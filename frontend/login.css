@@ -1,0 +1,116 @@
+:root {
+  --bg: #0f1220;
+  --panel: #121630;
+  --panel-2: #0e132a;
+  --text: #e6e9f5;
+  --muted: #9aa3b2;
+  --brand: #6ea8fe;
+  --brand-2: #7b6bff;
+  --danger: #ff6b6b;
+  --ring: 0 0 0 4px rgba(110, 168, 254, 0.25);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  color: var(--text);
+  background:
+    radial-gradient(60% 60% at 10% 10%, #1c2148 0%, transparent 60%),
+    radial-gradient(60% 60% at 90% 20%, #232a59 0%, transparent 60%),
+    radial-gradient(50% 50% at 50% 100%, #1a1f44 0%, transparent 60%),
+    var(--bg);
+  font: 400 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+}
+
+.page {
+  min-height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-2) 100%);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 16px;
+  box-shadow:
+    0 10px 30px rgba(0,0,0,0.4),
+    inset 0 1px 0 rgba(255,255,255,0.04);
+  padding: 24px 22px;
+  backdrop-filter: blur(6px);
+}
+
+.card__header { margin-bottom: 16px; text-align: center; }
+.logo {
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.3px;
+  background: linear-gradient(90deg, var(--brand), var(--brand-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.sub { margin: 6px 0 0; color: var(--muted); }
+
+.form { display: grid; gap: 14px; }
+
+.field label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  padding: 12px 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+  color: var(--text);
+  outline: none;
+}
+input:focus { box-shadow: var(--ring); border-color: rgba(110,168,254,0.6); }
+
+.password { position: relative; }
+.password .toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.btn {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(90deg, var(--brand), var(--brand-2));
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(1.05); }
+
+.error {
+  margin: 6px 2px 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.card__footer { margin-top: 16px; text-align: center; color: var(--muted); }

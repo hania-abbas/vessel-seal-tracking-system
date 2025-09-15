@@ -1,4 +1,4 @@
-// backend/index.js
+// backend/index.js****
 
 const express = require('express');
 const cors = require('cors');
@@ -65,6 +65,22 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+
+
+// Serve static files from frontend
+app.use(express.static(path.join(__dirname, '../frontend')));
+
+//explicit root routr
+app.get('/' , (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
+})
+
+app.use('/api/login' , require('./routes/login'));
+
+const authenticateJWT = require('./middleware/auth');
+
+app.use(authenticateJWT); //before API routes
+
 // API Routes
 app.use('/api/delivered-seals', require('./routes/delivered'));
 app.use('/api/returned-seals', require('./routes/returned'));
@@ -72,8 +88,6 @@ app.use('/api/visits', require('./routes/visit'));
 app.use('/api/vessels', require('./routes/vessels'));
 app.use('/api/seal-log', require('./routes/sealLog'));
 
-// Serve static files from frontend
-app.use(express.static(path.join(__dirname, '../frontend')));
 
 // 404 handler for API routes
 app.use('/api', (req, res) => {
