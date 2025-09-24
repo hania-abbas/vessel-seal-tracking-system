@@ -1,9 +1,12 @@
-<!-- frontend/seal.html -->
+<!--seal.html-->
+<!--CHANGE IT ************************-->
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <title>Seal Entry</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- CSS only -->
     <link rel="stylesheet" href="style.css" />
     <link rel="stylesheet" href="loading.css" />
   </head>
@@ -15,6 +18,7 @@
       <!-- Submission History Panel -->
       <div id="submissionHistory" class="submission-history-panel"></div>
 
+      <!-- Visit gate (shown when no visit is resolved) -->
       <div
         id="visitGate"
         class="form-box"
@@ -29,7 +33,7 @@
             <label for="visitSelect">Visit</label>
             <select id="visitSelect"></select>
             <div class="form-group" style="align-self: flex-end">
-              <button id="visitUseBtn" tyep="button" class="btn update-btn">
+              <button id="visitUseBtn" type="button" class="btn update-btn">
                 Use this visit
               </button>
             </div>
@@ -37,7 +41,7 @@
         </div>
       </div>
 
-      <!-- Delivered Seals Section -->
+      <!-- Delivered Seals -->
       <div class="form-box delivered">
         <h2>Delivered Seals</h2>
         <form id="sealForm">
@@ -62,9 +66,7 @@
             </div>
           </div>
 
-          <!-- Two columns: LEFT = Notes+Supervisor, RIGHT = Preview+Buttons -->
           <div class="form-row vertical-flex">
-            <!-- LEFT -->
             <div class="half">
               <label for="delivered_notes">Notes</label>
               <textarea id="delivered_notes" rows="3"></textarea>
@@ -80,7 +82,6 @@
               </select>
             </div>
 
-            <!-- RIGHT -->
             <div class="half">
               <label for="entered_seals">Entered Seals (preview)</label>
               <textarea id="entered_seals" rows="4" readonly></textarea>
@@ -110,7 +111,7 @@
         </p>
       </div>
 
-      <!-- Returned Seals Section -->
+      <!-- Returned Seals -->
       <div class="form-box returned">
         <h2>Returned Seals</h2>
         <form id="returnedSealForm">
@@ -157,9 +158,7 @@
             </div>
           </div>
 
-          <!-- Two columns: LEFT = Notes+Supervisor, RIGHT = Preview+Buttons -->
           <div class="form-row vertical-flex">
-            <!-- LEFT -->
             <div class="half">
               <label for="return_notes">Notes</label>
               <textarea id="return_notes" rows="3"></textarea>
@@ -177,7 +176,6 @@
               </select>
             </div>
 
-            <!-- RIGHT -->
             <div class="half">
               <label for="return_entered_seals">Entered Seals (preview)</label>
               <textarea id="return_entered_seals" rows="4" readonly></textarea>
@@ -194,7 +192,7 @@
       </div>
     </div>
 
-    <!-- Seal Log Section -->
+    <!-- Seal Log -->
     <div class="form-box" id="seal-log">
       <div class="row-between" style="margin-bottom: 12px">
         <h2>Seal Log</h2>
@@ -202,233 +200,21 @@
           Refresh Log
         </button>
       </div>
-
       <div id="sealLogMeta" class="muted" style="margin-bottom: 10px"></div>
       <div id="sealLogBox" aria-label="Seal Log" role="log"></div>
     </div>
 
-    <!--AUTH + API helpers-->
-    <!--Scripts-->
-    <!-- AUTH + API helpers (global) -->
-    <script>
-      // Backend base + where the token is stored by login.js
-      window.API_BASE = "http://localhost:3000";
-      window.TOKEN_KEY = "authToken";
+    <!-- config/auth define window.App + apiFetch-->
+    <script src="/config.js" defer></script>
+    <script src="/auth-client.js" defer></script>
 
-      function getToken() {
-        return localStorage.getItem(window.TOKEN_KEY);
-      }
+    <!--shared helpers-->
 
-      function redirectToLogin() {
-        // keep where we came from so we can bounce back after login
-        const here = encodeURIComponent(location.pathname + location.search);
-        // since you're serving frontend as static from backend/, /login.html is at web root
-        location.href = `/login.html?next=${here}`;
-      }
+    <script src="/visit-context.js" defer></script>
+    <script src="/textarea-resize.js" defer></script>
 
-      // Ensure a token exists or redirect
-      function requireAuth() {
-        const t = getToken();
-        if (!t) {
-          redirectToLogin();
-          throw new Error("no_token");
-        }
-        return t;
-      }
-
-      // Unified fetch that injects JWT + auto-redirects on 401/403
-      async function apiFetch(path, options = {}) {
-        const token = requireAuth();
-
-        const url = path.startsWith("http")
-          ? path
-          : `${window.API_BASE}${path}`;
-        const headers = {
-          "Content-Type": "application/json",
-          ...(options.headers || {}),
-          Authorization: `Bearer ${token}`,
-        };
-
-        const res = await fetch(url, {
-          ...options,
-          headers,
-          cache: "no-store",
-        });
-
-        if (res.status === 401 || res.status === 403) {
-          // token bad/expired on server — clear it and bounce to login
-          try {
-            await res.json();
-          } catch {}
-          localStorage.removeItem(window.TOKEN_KEY);
-          redirectToLogin();
-          throw new Error("unauthorized");
-        }
-
-        const text = await res.text();
-        return text ? JSON.parse(text) : null;
-      }
-    </script>
-    <script>
-      // Resolve a visit from URL -> localStorage -> backend
-      function getVisitFromUrl() {
-        const url = new URL(location.href);
-        const v = (url.searchParams.get("visit") || "").trim();
-        return v || null;
-      }
-      function getVisitFromLS() {
-        return localStorage.getItem("currentVisit") || null;
-      }
-      function setVisit(v) {
-        localStorage.setItem("currentVisit", v);
-        // also reflect into hidden inputs if present
-        const h1 = document.getElementById("visit");
-        const h2 = document.getElementById("return_visit");
-        if (h1) h1.value = v;
-        if (h2) h2.value = v;
-      }
-
-      async function resolveVisit() {
-        const fromUrl = getVisitFromUrl();
-        if (fromUrl) {
-          setVisit(fromUrl);
-          return fromUrl;
-        }
-
-        const fromLS = getVisitFromLS();
-        if (fromLS) {
-          setVisit(fromLS);
-          return fromLS;
-        }
-
-        try {
-          const j = await apiFetch("/api/visits/active");
-          if (j?.visit) {
-            setVisit(j.visit);
-            return j.visit;
-          }
-        } catch {}
-        return null;
-      }
-
-      async function populateVisitPicker() {
-        const sel = document.getElementById("visitSelect");
-        sel.innerHTML = '<option value="">Loading…</option>';
-        let list = [];
-
-        // Try a filtered list of open/active visits first; fallback to full list
-        try {
-          const j = await apiFetch("/api/visits?status=open");
-          list = j?.visits || j || [];
-        } catch {
-          try {
-            const j2 = await apiFetch("/api/visits");
-            list = j2?.visits || j2 || [];
-          } catch {}
-        }
-
-        // Accept arrays of strings or objects; try common property names
-        const options =
-          (Array.isArray(list) ? list : [])
-            .map((it) => {
-              const val =
-                typeof it === "string"
-                  ? it
-                  : it.visit || it.id || it.code || "";
-              const label =
-                typeof it === "string" ? it : it.name || it.label || val;
-              return val ? `<option value="${val}">${label}</option>` : "";
-            })
-            .join("") || '<option value="">No visits found</option>';
-
-        sel.innerHTML = options;
-      }
-
-      async function ensureVisitOrGate() {
-        const v = await resolveVisit();
-        const gate = document.getElementById("visitGate");
-        const meta = document.getElementById("sealLogMeta");
-
-        if (v) {
-          if (gate) gate.style.display = "none";
-          if (meta) meta.textContent = `Visit: ${v}`;
-          // Fire any initial loads that require a visit
-          window.loadSealLog?.();
-          // If your delivered/returned code reads hidden inputs, make sure they’re set:
-          setVisit(v);
-          return;
-        }
-
-        // No visit → show gate + populate list
-        if (gate) gate.style.display = "";
-        await populateVisitPicker();
-
-        document
-          .getElementById("visitUseBtn")
-          ?.addEventListener("click", async () => {
-            const chosen = document.getElementById("visitSelect")?.value || "";
-            if (!chosen) return;
-
-            setVisit(chosen);
-            // Optionally inform backend which visit is active (ignore if you don’t have this route)
-            try {
-              await apiFetch("/api/visits/active", {
-                method: "POST",
-                body: JSON.stringify({ visit: chosen }),
-              });
-            } catch {}
-
-            // Put it in the URL so refresh/share keeps the context
-            const url = new URL(location.href);
-            url.searchParams.set("visit", chosen);
-            location.href = url.toString();
-          });
-      }
-
-      document.addEventListener("DOMContentLoaded", ensureVisitOrGate);
-    </script>
-
-    <script src="seal-log.js"></script>
-    <script src="deliveredSeals.js"></script>
-    <script src="returnedSeals.js"></script>
-
-    <!-- Tiny autosize helper for preview boxes -->
-    <script>
-      function autosizeTextarea(el) {
-        if (!el) return;
-        const max =
-          parseInt(getComputedStyle(el).maxHeight || "0", 10) || Infinity;
-        el.style.height = "auto";
-        el.style.height = Math.min(el.scrollHeight, max) + "px";
-      }
-      function refreshPreviewsAutosize() {
-        autosizeTextarea(document.getElementById("entered_seals"));
-        autosizeTextarea(document.getElementById("return_entered_seals"));
-      }
-      window.addEventListener("load", refreshPreviewsAutosize);
-      window.addEventListener("resize", refreshPreviewsAutosize);
-      // Call autosizeTextarea() after you set preview values in delivered/returned JS.
-    </script>
-
-    <script>
-      function autoExpand(el) {
-        if (!el) return;
-        el.style.height = "auto"; // reset height
-        el.style.height = el.scrollHeight + "px"; // set to content height
-      }
-
-      function attachAutoExpand(id) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.addEventListener("input", () => autoExpand(el));
-        // expand once on page load in case there's prefilled content
-        autoExpand(el);
-      }
-
-      window.addEventListener("load", () => {
-        attachAutoExpand("delivered_notes");
-        attachAutoExpand("return_notes");
-      });
-    </script>
+    <script src="/returnedSeals.js" defer></script>
+    <script src="/seal-log.js" defer></script>
+    <script src="/deliveredSeals.js" defer></script>
   </body>
 </html>

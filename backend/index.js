@@ -1,4 +1,4 @@
-// backend/index.js****
+// backend/index.js
 
 const express = require('express');
 const cors = require('cors');
@@ -68,6 +68,10 @@ app.get('/api/health', async (req, res) => {
 
 
 // Serve static files from frontend
+const frontDir = path.join(__dirname, '../frontend');
+console.log('Serving static from:' ,frontDir);
+app.use(express.static(frontDir));
+
 app.use(express.static(path.join(__dirname, '../frontend')));
 
 //explicit root routr
@@ -78,8 +82,7 @@ app.get('/' , (req, res) => {
 app.use('/api/login' , require('./routes/login'));
 
 const authenticateJWT = require('./middleware/auth');
-
-app.use(authenticateJWT); //before API routes
+app.use('/api' , authenticateJWT); //before API routes
 
 // API Routes
 app.use('/api/delivered-seals', require('./routes/delivered'));

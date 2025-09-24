@@ -1,5 +1,4 @@
-//for homepage script.js
-
+// frontend/script.js
 document.addEventListener('DOMContentLoaded', () => {
   const tableBody = document.getElementById('table-body');
   const pagination = document.getElementById('pagination');
@@ -8,21 +7,58 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPage = 1;
   let vesselData = [];
 
-  // Fetch vessel data
-  fetch('http://localhost:3000/api/vessels')
-    .then(res => res.json())
-    .then(data => {
-      if (Array.isArray(data)) {
-        vesselData = data;
-        renderTable(currentPage);
-      } else {
-        console.error("Unexpected response:", data);
-        alert("Failed to load vessel data");
+  // ---- auth helpers ----
+  const TOKEN_KEY = 'authToken';
+  function getToken() {
+    return localStorage.getItem(TOKEN_KEY);
+  }
+  function requireAuth() {
+    const t = getToken();
+    if (!t) {
+      const next = encodeURIComponent('/index.html');
+      location.href = `/login.html?next=${next}`;
+      return false;
+    }
+    return true;
+  }
+  async function apiFetch(path, options = {}) {
+    const token = getToken();
+    return fetch(path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
       }
+    });
+  }
+
+  // block page if no token
+  if (!requireAuth()) return;
+
+  // Fetch vessel data (same origin; no need to hardcode http://localhost:3000)
+  apiFetch('/api/vessels')
+    .then(async (res) => {
+      if (!res.ok) {
+        // If token expired or missing, backend will send 401 → go to login
+        if (res.status === 401) {
+          const next = encodeURIComponent('/index.html');
+          location.href = `/login.html?next=${next}`;
+          return Promise.reject(new Error('Unauthorized'));
+        }
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.error || `Request failed: ${res.status}`);
+      }
+      return res.json();
     })
-    .catch(error => {
-      console.error("Fetch error:", error);
-      alert("Could not connect to backend");
+    .then((data) => {
+      // normalize shape (array or wrapped)
+      vesselData = Array.isArray(data) ? data : (data?.items || data?.vessels || []);
+      renderTable(currentPage);
+    })
+    .catch((error) => {
+      console.error('Fetch error:', error);
+      alert('Failed to load vessel data');
     });
 
   // Render paginated table
@@ -33,15 +69,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const end = start + pageSize;
     const pageData = vesselData.slice(start, end);
 
-    pageData.forEach(v => {
+    pageData.forEach((v) => {
+      // Be resilient to different field names/casing
+      const ref    = v.VesselRefNo ?? v.vessel_ref_no ?? v.vesselRefNo ?? '';
+      const visit  = v.Visit       ?? v.visit       ?? '';
+      const name   = v.VesselName  ?? v.vessel_name ?? v.name ?? '';
+      const status = v.Status      ?? v.status      ?? '';
+      const etaVal = v.ETA ?? v.ETA_UTC ?? v.ATA ?? v.eta ?? v.ata;
+
       const row = document.createElement('tr');
       row.innerHTML = `
-        <td>${v.VesselRefNo}</td>
-        <td>${v.Visit}</td>
-        <td>${v.VesselName}</td>
-        <td>${v.Status}</td> 
-        <td>${formatDate(v.ATA)}</td>
-        <td><a href="seal.html?visit=${v.Visit}" class="seal-btn">Seal</a></td>
+        <td>${ref}</td>
+        <td>${visit}</td>
+        <td>${name}</td>
+        <td>${status}</td>
+        <td>${formatDate(etaVal)}</td>
+        <td><a href="seal.html?visit=${encodeURIComponent(visit)}" class="seal-btn">Seal</a></td>
       `;
       tableBody.appendChild(row);
     });
@@ -52,14 +95,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Format datetime
   function formatDate(dateStr) {
     if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleString();
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? String(dateStr) : d.toLocaleString();
   }
 
   // Render pagination
   function renderPagination(currentPage) {
     pagination.innerHTML = '';
 
-    const totalPages = Math.ceil(vesselData.length / pageSize);
+    const totalPages = Math.ceil(vesselData.length / pageSize) || 1;
     const maxButtons = 5;
     const startPage = Math.max(1, currentPage - Math.floor(maxButtons / 2));
     const endPage = Math.min(totalPages, startPage + maxButtons - 1);

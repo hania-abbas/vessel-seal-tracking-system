@@ -1,51 +1,16 @@
 // frontend/returnedSeals.js
-// Range (From/To) + multiple single seals (comma-separated) with preview, totals, and submit (Option A stays backend-side).
-
 (function () {
-  // ---------- API helper (uses global if present) ----------
-  const API_BASE  = window.API_BASE  || localStorage.getItem('API_BASE') || 'http://localhost:3000';
-  const TOKEN_KEY = window.TOKEN_KEY || 'authToken';
-
-  async function apiFetch(path, options = {}) {
-    if (typeof window.apiFetch === 'function') {
-      return window.apiFetch(path, options);
-    }
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      alert('Not authenticated. Please log in.');
-      location.href = '/login.html?next=' + encodeURIComponent(location.pathname + location.search);
-      throw new Error('no_token');
-    }
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-      'Authorization': `Bearer ${token}`,
-    };
-    const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
-    const res = await fetch(url, { ...options, headers, cache: 'no-store' });
-    if (res.status === 401 || res.status === 403) {
-      localStorage.removeItem(TOKEN_KEY);
-      location.href = '/login.html?next=' + encodeURIComponent(location.pathname + location.search);
-      throw new Error('unauthorized');
-    }
-    const text = await res.text();
-    return text ? JSON.parse(text) : null;
-  }
-
-  // ---------- tiny DOM helpers ----------
   const g = (id) => document.getElementById(id);
   const val = (id) => (g(id)?.value ?? '').trim();
   const set = (id, v) => { const el = g(id); if (el) el.value = v; };
   const autoSize = (el) => { if (!el) return; el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; };
   const autoSizeById = (id) => autoSize(g(id));
-
-  // ---------- validation ----------
   const RE_SEAL = /^[0-9]{6,9}$/;
 
   function parseSinglesCSV(input) {
     if (!input) return [];
     return input
-      .split(',')                     // commas only
+      .split(',')
       .map(s => s.trim())
       .filter(Boolean)
       .filter(s => RE_SEAL.test(s));
@@ -71,25 +36,21 @@
     return (rangeObj ? rangeObj.count : 0) + (singlesArr?.length || 0);
   }
 
-  // ---------- visit resolver ----------
   async function getActiveVisit() {
-    // URL
     const u = new URL(window.location.href);
     const inUrl = (u.searchParams.get('visit') || '').trim();
     if (inUrl) return inUrl;
 
-    // localStorage
     const ls = localStorage.getItem('currentVisit');
     if (ls) return ls;
 
-    // backend
     try {
-      const j = await apiFetch('/api/visits/active');
+      const res = await App.apiFetch('/api/visits/active');
+      const j = await res.json();
       return j?.visit || null;
     } catch { return null; }
   }
 
-  // ---------- preview + totals ----------
   function refreshPreview() {
     const range   = parseRange(val('return_seal_from'), val('return_seal_to'));
     const singles = parseSinglesCSV(val('return_single_seal'));
@@ -111,9 +72,10 @@
     autoSizeById('return_entered_seals');
   }
 
-  // ---------- submit ----------
   async function onSubmit(e) {
     if (e) e.preventDefault();
+
+    try { App.requireAuth(); } catch { return; }
 
     const visit = await getActiveVisit();
     if (!visit) {
@@ -136,7 +98,7 @@
 
     const payload = {
       visit,
-      seal_number: buildSealNumber(range, singles),           // e.g. "800001-800003,800200,800201"
+      seal_number: buildSealNumber(range, singles),
       damaged_seal_number: parseSinglesCSV(val('damaged_seal')).join(',') || null,
       lost_seal_number:    parseSinglesCSV(val('lost_seal')).join(',') || null,
       vessel_supervisor,
@@ -145,12 +107,48 @@
     };
 
     try {
-      await apiFetch('/api/returned-seals', {
+      const res = await App.apiFetch('/api/returned-seals', {
         method: 'POST',
         body: JSON.stringify(payload)
       });
 
-      // clear
+      const raw = await res.text();
+      let data; try { data = JSON.parse(raw); } catch { data = { message: raw }; }
+
+      if (!res.ok) {
+        // 409: our backend returns either {error:'invalid_return', not_delivered, already_returned}
+        // or {error:'duplicate', overlaps, singles}
+        if (res.status === 409) {
+          if (data?.error === 'invalid_return') {
+            const notDel   = (data.not_delivered || []).join(', ');
+            const already  = (data.already_returned || []).join(', ');
+            const lines = [];
+            if (notDel)  lines.push(`Not delivered: ${notDel}`);
+            if (already) lines.push(`Already returned: ${already}`);
+            alert(`Cannot return those seals:\n${lines.join('\n') || raw}`);
+            return; // IMPORTANT: stop here
+          }
+          if (data?.error === 'duplicate') {
+            const overlaps = Array.isArray(data.overlaps) ? data.overlaps.join(', ') : '';
+            const singlesD = Array.isArray(data.singles)  ? data.singles.join(', ')  : '';
+            const lines = [];
+            if (overlaps) lines.push(`Overlaps: ${overlaps}`);
+            if (singlesD) lines.push(`Duplicates: ${singlesD}`);
+            alert(`Duplicate returned seal(s):\n${lines.join('\n') || raw}`);
+            return; // IMPORTANT: stop here
+          }
+        }
+
+        if (res.status === 400 && Array.isArray(data?.details)) {
+          alert(`Validation error:\n• ${data.details.join('\n• ')}`);
+          return; // IMPORTANT: stop here
+        }
+
+        alert(`Failed to submit returned seals.\n${res.status} ${res.statusText}\n${data?.message || ''}`);
+        return; // IMPORTANT: stop here
+      }
+
+      // ---- success only below ----
       [
         'return_seal_from','return_seal_to','return_single_seal',
         'damaged_seal','lost_seal','return_total_count',
@@ -162,7 +160,7 @@
       alert('Returned seal(s) saved!');
     } catch (err) {
       console.error(err);
-      alert('Failed to submit returned seals.');
+      alert('Network / server error while submitting returned seals.');
     }
   }
 
@@ -175,7 +173,6 @@
     refreshPreview();
   }
 
-  // ---------- wire up ----------
   function wire() {
     ['return_seal_from','return_seal_to','return_single_seal','damaged_seal','lost_seal','return_notes']
       .forEach(id => {
