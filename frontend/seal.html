@@ -1,220 +1,274 @@
-<!--seal.html-->
-<!--CHANGE IT ************************-->
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Seal Entry</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- CSS only -->
-    <link rel="stylesheet" href="style.css" />
-    <link rel="stylesheet" href="loading.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Seal Management</title>
+
+    <!-- Local vendor CSS -->
+    <link rel="stylesheet" href="/vendor/bootstrap/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="/vendor/fontawesome/css/all.min.css" />
+
+    <!-- App CSS -->
+    <link rel="stylesheet" href="/styles_updated.css" />
   </head>
   <body>
-    <div id="submissionStatus" class="submission-status"></div>
-    <div class="page-wrapper">
-      <h1 class="title">Seal Entry</h1>
+    <div class="container-fluid py-4">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h1 class="h2 fw-bold">
+            <i class="fa-solid fa-stamp me-2"></i>Seal Management
+          </h1>
+          <p class="text-muted mb-0">
+            Vessel: <strong id="lblVesselName">Ocean Carrier</strong> | Visit:
+            <strong id="lblVisit">VC-2023-089</strong> | Ref:
+            <strong id="lblRefNo">REF-7821-2023</strong>
+          </p>
+        </div>
+        <button id="btnBackToSchedule" class="btn btn-outline-primary">
+          ← Back to Schedule
+        </button>
+      </div>
 
-      <!-- Submission History Panel -->
-      <div id="submissionHistory" class="submission-history-panel"></div>
+      <div class="stats-row">
+        <div class="row g-3 g-md-0">
+          <div class="col-md-2 stat-item">
+            <div class="stat-number text-success" id="lblDeliveredCount">0</div>
+            <div class="stat-label">Delivered</div>
+          </div>
+          <div class="col-md-2 stat-item">
+            <div class="stat-number text-primary" id="lblReturnedCount">0</div>
+            <div class="stat-label">Returned</div>
+          </div>
+          <div class="col-md-2 stat-item">
+            <div class="stat-number text-warning" id="lblDamagedCount">0</div>
+            <div class="stat-label">Damaged</div>
+          </div>
+          <div class="col-md-2 stat-item">
+            <div class="stat-number text-danger" id="lblLostCount">0</div>
+            <div class="stat-label">Lost</div>
+          </div>
+          <div class="col-md-2 stat-item">
+            <div class="stat-number text-info" id="lblMissingCount">0</div>
+            <div class="stat-label">Missing</div>
+          </div>
+          <div class="col-md-2 stat-item">
+            <div class="stat-number text-secondary" id="lblTotalCount">0</div>
+            <div class="stat-label">Total</div>
+          </div>
+        </div>
+      </div>
 
-      <!-- Visit gate (shown when no visit is resolved) -->
-      <div
-        id="visitGate"
-        class="form-box"
-        style="display: none; border-color: #e67e22"
-      >
-        <h2>Choose Visit</h2>
-        <p class="muted" style="margin-bottom: 8px">
-          Seal Entry needs a visit. Pick one to continue.
-        </p>
-        <div class="form-row">
-          <div class="form-group" style="min-width: 260px">
-            <label for="visitSelect">Visit</label>
-            <select id="visitSelect"></select>
-            <div class="form-group" style="align-self: flex-end">
-              <button id="visitUseBtn" type="button" class="btn update-btn">
-                Use this visit
-              </button>
+      <div class="row">
+        <!-- Delivered -->
+        <div class="col-lg-6">
+          <div class="seal-card delivered-card">
+            <div class="seal-card-header">
+              <h5 class="mb-0">
+                <i class="fa-solid fa-arrow-down me-2"></i>Delivered Seals
+                <span class="count-badge"
+                  >Count: <span id="lblDeliveredCountBadge">0</span></span
+                >
+              </h5>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">From - To (Range)</label>
+                  <input
+                    type="text"
+                    id="txtDeliveredRange"
+                    class="form-control"
+                    placeholder="e.g., 930001-930083,908478-908480"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Single Seal</label>
+                  <input
+                    type="text"
+                    id="txtDeliveredSingle"
+                    class="form-control"
+                    placeholder="e.g., 950001"
+                  />
+                </div>
+                <div class="col-12">
+                  <label class="form-label"
+                    >Vessel Supervisor (Receiving)</label
+                  >
+                  <select id="ddlDeliveredSupervisor" class="form-select">
+                    <option value="">Select Supervisor</option>
+                    <option>John Smith</option>
+                    <option>Maria Garcia</option>
+                    <option>David Johnson</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Remarks</label>
+                  <textarea
+                    id="txtDeliveredRemarks"
+                    class="form-control"
+                    rows="2"
+                    placeholder="Enter any remarks..."
+                  ></textarea>
+                </div>
+              </div>
+
+              <div class="mt-3 d-flex gap-2">
+                <button
+                  id="btnSaveDelivered"
+                  class="btn btn-success btn-action"
+                >
+                  Save Delivered
+                </button>
+                <button
+                  id="btnEditDelivered"
+                  class="btn btn-warning btn-action"
+                >
+                  Edit
+                </button>
+                <button
+                  id="btnClearDelivered"
+                  class="btn btn-danger btn-action"
+                >
+                  Clear All
+                </button>
+              </div>
+
+              <div class="mt-3">
+                <label class="form-label">Delivered Seals List</label>
+                <textarea
+                  id="txtDeliveredList"
+                  class="form-control seal-textarea"
+                  rows="6"
+                  readonly
+                ></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Returned -->
+        <div class="col-lg-6">
+          <div class="seal-card returned-card">
+            <div class="seal-card-header">
+              <h5 class="mb-0">
+                <i class="fa-solid fa-arrow-up me-2"></i>Returned Seals
+                <span class="count-badge"
+                  >Count: <span id="lblReturnedCountBadge">0</span></span
+                >
+              </h5>
+            </div>
+            <div class="card-body">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label">Returned Range</label>
+                  <input
+                    type="text"
+                    id="txtReturnedRange"
+                    class="form-control"
+                    placeholder="e.g., 930001-930050"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Single Returned</label>
+                  <input
+                    type="text"
+                    id="txtReturnedSingle"
+                    class="form-control"
+                    placeholder="e.g., 930075"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Damaged Seals</label>
+                  <input
+                    type="text"
+                    id="txtDamagedSeals"
+                    class="form-control"
+                    placeholder="e.g., 930051,930052"
+                  />
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label">Lost Seals</label>
+                  <input
+                    type="text"
+                    id="txtLostSeals"
+                    class="form-control"
+                    placeholder="e.g., 930053,930054"
+                  />
+                </div>
+                <div class="col-12">
+                  <label class="form-label"
+                    >Vessel Supervisor (Returning)</label
+                  >
+                  <select id="ddlReturnedSupervisor" class="form-select">
+                    <option value="">Select Supervisor</option>
+                    <option>John Smith</option>
+                    <option>Maria Garcia</option>
+                    <option>David Johnson</option>
+                  </select>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Remarks</label>
+                  <textarea
+                    id="txtReturnedRemarks"
+                    class="form-control"
+                    rows="2"
+                    placeholder="Enter any remarks..."
+                  ></textarea>
+                </div>
+              </div>
+
+              <div class="mt-3 d-flex gap-2">
+                <button id="btnSaveReturned" class="btn btn-success btn-action">
+                  Save Returned
+                </button>
+                <button id="btnEditReturned" class="btn btn-warning btn-action">
+                  Edit
+                </button>
+                <button id="btnClearReturned" class="btn btn-danger btn-action">
+                  Clear All
+                </button>
+              </div>
+
+              <div class="mt-3">
+                <label class="form-label">Returned Seals List</label>
+                <textarea
+                  id="txtReturnedList"
+                  class="form-control seal-textarea"
+                  rows="6"
+                  readonly
+                ></textarea>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Delivered Seals -->
-      <div class="form-box delivered">
-        <h2>Delivered Seals</h2>
-        <form id="sealForm">
-          <input type="hidden" id="visit" name="visit" />
-
-          <div class="form-row">
-            <div class="form-group">
-              <label for="seal_from">Seal # From</label>
-              <input type="text" id="seal_from" />
+      <!-- Audit Log -->
+      <div class="row mt-4">
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header bg-secondary text-white">
+              <h5 class="mb-0">
+                <i class="fa-solid fa-history me-2"></i>Audit Log & Activity
+                History
+              </h5>
             </div>
-            <div class="form-group">
-              <label for="seal_to">To</label>
-              <input type="text" id="seal_to" />
-            </div>
-            <div class="form-group">
-              <label for="single_seal">Single Seal #</label>
-              <input type="text" id="single_seal" />
-            </div>
-            <div class="form-group">
-              <label for="total_count">Total Count</label>
-              <input type="number" id="total_count" readonly />
+            <div class="card-body">
+              <pre id="auditLogText" class="audit-log"></pre>
             </div>
           </div>
-
-          <div class="form-row vertical-flex">
-            <div class="half">
-              <label for="delivered_notes">Notes</label>
-              <textarea id="delivered_notes" rows="3"></textarea>
-
-              <label for="vessel_supervisor" style="margin-top: 10px"
-                >Vessel Supervisor</label
-              >
-              <select id="vessel_supervisor">
-                <option value="">Select Vessel Supervisor</option>
-                <option value="John Doe">John Doe</option>
-                <option value="Fatima Saleh">Fatima Saleh</option>
-                <option value="Ali Hamdan">Ali Hamdan</option>
-              </select>
-            </div>
-
-            <div class="half">
-              <label for="entered_seals">Entered Seals (preview)</label>
-              <textarea id="entered_seals" rows="4" readonly></textarea>
-
-              <div class="button-row right">
-                <button id="updateBtn" type="submit" class="btn update-btn">
-                  Submit
-                </button>
-                <button type="button" id="deliveredClear" class="btn clear-btn">
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        </form>
-
-        <p
-          id="clear-message"
-          style="
-            display: none;
-            color: green;
-            font-weight: bold;
-            margin-top: 10px;
-          "
-        >
-          Delivered Seal Form cleared successfully.
-        </p>
-      </div>
-
-      <!-- Returned Seals -->
-      <div class="form-box returned">
-        <h2>Returned Seals</h2>
-        <form id="returnedSealForm">
-          <input type="hidden" id="return_visit" />
-
-          <div class="form-row">
-            <div class="form-group">
-              <label for="return_seal_from">Seal # From</label>
-              <input type="text" id="return_seal_from" />
-            </div>
-            <div class="form-group">
-              <label for="return_seal_to">To</label>
-              <input type="text" id="return_seal_to" />
-            </div>
-            <div class="form-group">
-              <label for="return_single_seal">Single Seal #</label>
-              <input type="text" id="return_single_seal" />
-            </div>
-            <div class="form-group">
-              <label for="return_total_count">Total Count</label>
-              <input type="number" id="return_total_count" readonly />
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label for="damaged_seal">Damaged Seal #</label>
-              <input type="text" id="damaged_seal" />
-            </div>
-            <div class="form-group">
-              <label for="damaged_count">Total Count of Damaged</label>
-              <input type="number" id="damaged_count" readonly />
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group">
-              <label for="lost_seal">Lost Seal #</label>
-              <input type="text" id="lost_seal" />
-            </div>
-            <div class="form-group">
-              <label for="lost_count">Total Count of Lost</label>
-              <input type="number" id="lost_count" readonly />
-            </div>
-          </div>
-
-          <div class="form-row vertical-flex">
-            <div class="half">
-              <label for="return_notes">Notes</label>
-              <textarea id="return_notes" rows="3"></textarea>
-
-              <label for="return_vessel_supervisor" style="margin-top: 10px"
-                >Vessel Supervisor</label
-              >
-              <select id="return_vessel_supervisor" required>
-                <option value="" disabled selected>
-                  Select Vessel Supervisor
-                </option>
-                <option value="John Doe">John Doe</option>
-                <option value="Fatima Saleh">Fatima Saleh</option>
-                <option value="Ali Hamdan">Ali Hamdan</option>
-              </select>
-            </div>
-
-            <div class="half">
-              <label for="return_entered_seals">Entered Seals (preview)</label>
-              <textarea id="return_entered_seals" rows="4" readonly></textarea>
-
-              <div class="button-row right">
-                <button type="submit" class="btn update-btn">Submit</button>
-                <button type="button" id="returnedClear" class="btn clear-btn">
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        </form>
+        </div>
       </div>
     </div>
 
-    <!-- Seal Log -->
-    <div class="form-box" id="seal-log">
-      <div class="row-between" style="margin-bottom: 12px">
-        <h2>Seal Log</h2>
-        <button id="refreshSealLogBtn" type="button" class="btn clear-btn">
-          Refresh Log
-        </button>
-      </div>
-      <div id="sealLogMeta" class="muted" style="margin-bottom: 10px"></div>
-      <div id="sealLogBox" aria-label="Seal Log" role="log"></div>
-    </div>
+    <!-- Local vendor JS -->
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 
-    <!-- config/auth define window.App + apiFetch-->
-    <script src="/config.js" defer></script>
-    <script src="/auth-client.js" defer></script>
+    <script src="/config.js"></script>
+    <script src="/auth-client.js"></script>
 
-    <!--shared helpers-->
-
-    <script src="/visit-context.js" defer></script>
-    <script src="/textarea-resize.js" defer></script>
-
-    <script src="/returnedSeals.js" defer></script>
-    <script src="/seal-log.js" defer></script>
-    <script src="/deliveredSeals.js" defer></script>
+    <!--main logic-->
+    <script src="/script_updated.js"></script>
   </body>
 </html>

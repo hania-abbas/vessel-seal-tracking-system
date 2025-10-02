@@ -1,0 +1,90 @@
+/* ===== Layout / Globals ===== */
+:root{
+  --blue:#1976d2;
+  --blue-dark:#1565c0;
+  --green:#1b5e20;
+  --orange:#ef6c00;
+  --bg:#f8fafc;
+  --card:#ffffff;
+  --muted:#6c757d;
+  --radius:14px;
+  --shadow:0 10px 18px rgba(0,0,0,.08);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:#0f172a;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
+}
+.container-fluid{max-width:1180px}
+
+/* ===== Header ===== */
+h1.h2.fw-bold{letter-spacing:.3px}
+#btnBackToSchedule{border-radius:999px;padding:.5rem 1rem}
+
+/* ===== Stats Row ===== */
+.stats-row{background:#eaf4ff;border:2px solid #d7e8ff;border-radius:var(--radius);padding:1.25rem;margin-bottom:1.5rem}
+.stat-item{text-align:center}
+.stat-number{font-size:2rem;font-weight:800;line-height:1;margin-bottom:.35rem}
+.stat-label{font-size:.8rem;letter-spacing:.12rem;color:var(--muted);text-transform:uppercase}
+
+/* ===== Cards ===== */
+.seal-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:1.25rem;border:1px solid #e9eef6}
+.seal-card-header{display:flex;align-items:center;justify-content:space-between;padding:.9rem 1rem}
+.seal-card .card-body{padding:1rem 1rem 1.25rem}
+
+.delivered-card .seal-card-header{background:linear-gradient(135deg,var(--green),#0a4a12);color:#fff}
+.returned-card  .seal-card-header{background:linear-gradient(135deg,var(--orange),#d35400);color:#fff}
+
+.count-badge{display:inline-flex;gap:.35rem;align-items:center;background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);padding:.2rem .6rem;border-radius:999px;font-weight:700}
+
+/* ===== Forms ===== */
+.form-label{font-weight:600}
+.form-control,.form-select{border-radius:10px;border:1px solid #cfd8e3}
+.form-control:focus,.form-select:focus{border-color:var(--blue);box-shadow:0 0 0 .2rem rgba(25,118,210,.15)}
+.seal-textarea{min-height:170px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+
+/* ===== Audit Log ===== */
+.card .card-header.bg-secondary{background:linear-gradient(135deg,#64748b,#334155)!important}
+.audit-log{font-family:ui-monospace,Menlo,monospace;background:#0b1220;color:#e5e7eb;border-radius:10px;padding:1rem;border:1px solid #1f2937;white-space:pre-line;}
+
+.new-audit-entry{animation:highlight 2s ease}
+@keyframes highlight{
+  0%{background-color:rgba(25,118,210,.3)}
+  100%{background-color:transparent}
+}
+
+/* ===== Utilities ===== */
+.btn-action{border-radius:10px}
+.text-success{color:#2e7d32!important}
+.text-primary{color:#1976d2!important}
+.text-warning{color:#f57c00!important}
+.text-danger{color:#d32f2f!important}
+.text-info{color:#0288d1!important}
+.text-secondary{color:#6c757d!important}
+
+/* Responsive tweaks */
+@media (max-width: 991px){
+  .seal-card .card-body{padding:1rem}
+}
+
+.audit-log {
+    font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+    background:#0b1220;
+    color:#e5e7eb;
+    border: 1px solid #1f2937;
+    border-radius:10px;
+    padding:1rem;
+    margin:0;
+    white-space:pre-wrap;
+    line-height:1.4;
+
+    max-height: 260px;
+    overflow: auto;
+}
+
+.audit-log::-webkit-scrollbar{height:8px;width:8px}
+.audit-log::-webkit-scrollbar-thumb{background:#334155;border-radius:6px}
+.audit-log::-webkit-scrollbar-track{background:#0b1220};

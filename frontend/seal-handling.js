@@ -1,5 +1,5 @@
 // frontend/seal-handling.js
-// may delete
+
 import submissionState from './submission-state.js';
 import validationHelper from './validation.js';
 import submissionHistory from './submission-history.js';

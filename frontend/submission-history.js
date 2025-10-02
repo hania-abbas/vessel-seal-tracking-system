@@ -1,5 +1,5 @@
 // frontend/submission-history.js
-//may delete this 
+
 
 class SubmissionHistory {
     constructor() {

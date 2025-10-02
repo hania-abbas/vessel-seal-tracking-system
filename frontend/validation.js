@@ -1,6 +1,6 @@
 // frontend/validation.js
 
-//delete this
+
 const RE_SEAL = /^[0-9]{6,9}$/;
 const RE_VISIT = /^[A-Za-z0-9_-]{3,50}$/;
 
